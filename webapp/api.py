@@ -3,13 +3,9 @@
 from __future__ import annotations
 
 import csv
-import hashlib
-import hmac
 import io
 import json
-import os
 import re
-import secrets
 import tempfile
 import threading
 import time
@@ -20,16 +16,7 @@ from typing import Annotated
 from xml.etree.ElementTree import ParseError
 
 import openpyxl
-from fastapi import (
-    Depends,
-    FastAPI,
-    File,
-    Form,
-    HTTPException,
-    Request,
-    Response,
-    UploadFile,
-)
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from openpyxl.utils.exceptions import InvalidFileException
 from starlette.concurrency import run_in_threadpool
 
@@ -70,51 +57,6 @@ def _limit(request: Request, action: str, maximum: int, window_seconds: int) -> 
             for old_key, events in list(_rate_events.items()):
                 if not events or now - events[-1] > window_seconds:
                     _rate_events.pop(old_key, None)
-
-
-def _secrets() -> tuple[str, str]:
-    password = os.environ.get("APP_ACCESS_PASSWORD", "")
-    secret = os.environ.get("APP_SESSION_SECRET", "")
-    if len(password) < 12 or len(secret) < 32:
-        raise HTTPException(503, "Acesso ainda nao configurado no servidor.")
-    return password, secret
-
-
-def _session_token(password: str, secret: str) -> str:
-    expires = int(time.time()) + 12 * 60 * 60
-    nonce = secrets.token_urlsafe(12)
-    payload = f"{expires}.{nonce}"
-    signature = hmac.new(
-        secret.encode(), f"{payload}.{password}".encode(), hashlib.sha256
-    ).hexdigest()
-    return f"{payload}.{signature}"
-
-
-def _authenticated(request: Request) -> bool:
-    token = request.cookies.get("gerador_session", "")
-    parts = token.split(".")
-    if len(parts) != 3:
-        return False
-    try:
-        expires = int(parts[0])
-    except ValueError:
-        return False
-    if expires < time.time():
-        return False
-    try:
-        password, secret = _secrets()
-    except HTTPException:
-        return False
-    payload = f"{parts[0]}.{parts[1]}"
-    expected = hmac.new(
-        secret.encode(), f"{payload}.{password}".encode(), hashlib.sha256
-    ).hexdigest()
-    return hmac.compare_digest(parts[2], expected)
-
-
-def _require_auth(request: Request) -> None:
-    if not _authenticated(request):
-        raise HTTPException(401, "Entre com a senha para usar o gerador.")
 
 
 def _safe_name(filename: str | None) -> str:
@@ -350,36 +292,7 @@ def create_app() -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok", "version": VERSION}
 
-    @app.get("/api/session")
-    def session(request: Request) -> dict[str, bool]:
-        return {"authenticated": _authenticated(request)}
-
-    @app.post("/api/login")
-    def login(
-        request: Request, payload: dict[str, str], response: Response
-    ) -> dict[str, bool]:
-        _limit(request, "login", 12, 10 * 60)
-        password, secret = _secrets()
-        supplied = payload.get("password", "") if isinstance(payload, dict) else ""
-        if not hmac.compare_digest(supplied, password):
-            raise HTTPException(401, "Senha incorreta.")
-        response.set_cookie(
-            "gerador_session",
-            _session_token(password, secret),
-            max_age=12 * 60 * 60,
-            httponly=True,
-            secure=os.environ.get("APP_ENV") != "local",
-            samesite="strict",
-            path="/",
-        )
-        return {"authenticated": True}
-
-    @app.post("/api/logout", dependencies=[Depends(_require_auth)])
-    def logout(response: Response) -> dict[str, bool]:
-        response.delete_cookie("gerador_session", path="/")
-        return {"authenticated": False}
-
-    @app.post("/api/inspect", dependencies=[Depends(_require_auth)])
+    @app.post("/api/inspect")
     async def inspect(request: Request, file: Annotated[UploadFile, File()]):
         _limit(request, "inspect", 30, 60)
         with tempfile.TemporaryDirectory(prefix="gerador-web-upload-") as temporary:
@@ -399,7 +312,7 @@ def create_app() -> FastAPI:
             except ValueError as error:
                 raise HTTPException(422, str(error)) from error
 
-    @app.post("/api/generate", dependencies=[Depends(_require_auth)])
+    @app.post("/api/generate")
     async def generate(
         request: Request,
         file: Annotated[UploadFile, File()],

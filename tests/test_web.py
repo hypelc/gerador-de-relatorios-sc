@@ -15,32 +15,20 @@ ANNUAL = ROOT / "data" / "exemplos" / "BANCO DE DADOS CV - AMANDA E EMILENE.xlsx
 REGIONAL = ROOT / "data" / "exemplos" / "taxa estado SC.xlsx"
 
 
-def client(monkeypatch) -> TestClient:
-    monkeypatch.setenv("APP_ENV", "local")
-    monkeypatch.setenv("APP_ACCESS_PASSWORD", "senha-para-o-teste-123")
-    monkeypatch.setenv("APP_SESSION_SECRET", "0123456789abcdef0123456789abcdef")
+def client() -> TestClient:
     return TestClient(create_app())
 
 
-def authenticate(web: TestClient) -> None:
-    response = web.post("/api/login", json={"password": "senha-para-o-teste-123"})
-    assert response.status_code == 200
-
-
-def test_private_api_requires_login(monkeypatch) -> None:
-    web = client(monkeypatch)
+def test_public_api_accepts_upload_without_session() -> None:
+    web = client()
     response = web.post("/api/inspect", files={"file": ("dados.csv", b"a;b\n1;2")})
-    assert response.status_code == 401
-    assert web.get("/api/session").json() == {"authenticated": False}
-    authenticate(web)
-    assert web.get("/api/session").json() == {"authenticated": True}
+    assert response.status_code == 422
+    assert response.json()["detail"]["message"] == "Nenhuma tabela anual válida foi encontrada."
+    assert web.get("/api/session").status_code == 404
 
 
-def test_regional_workbook_generates_pdf_and_png_without_changing_source(
-    monkeypatch,
-) -> None:
-    web = client(monkeypatch)
-    authenticate(web)
+def test_regional_workbook_generates_pdf_and_png_without_changing_source() -> None:
+    web = client()
     source = REGIONAL.read_bytes()
     files = {"file": (REGIONAL.name, source)}
     inspected = web.post("/api/inspect", files=files)
@@ -73,9 +61,8 @@ def test_regional_workbook_generates_pdf_and_png_without_changing_source(
     assert REGIONAL.read_bytes() == source
 
 
-def test_annual_workbook_generates_web_pdf(monkeypatch) -> None:
-    web = client(monkeypatch)
-    authenticate(web)
+def test_annual_workbook_generates_web_pdf() -> None:
+    web = client()
     files = {"file": (ANNUAL.name, ANNUAL.read_bytes())}
     inspected = web.post("/api/inspect", files=files)
     assert inspected.status_code == 200
@@ -103,9 +90,8 @@ def test_annual_workbook_generates_web_pdf(monkeypatch) -> None:
     assert "Processamento local" not in method
 
 
-def test_mismatched_model_is_rejected(monkeypatch) -> None:
-    web = client(monkeypatch)
-    authenticate(web)
+def test_mismatched_model_is_rejected() -> None:
+    web = client()
     options = {
         "kind": "annual",
         "title": "Erro",
@@ -121,11 +107,8 @@ def test_mismatched_model_is_rejected(monkeypatch) -> None:
     assert response.status_code == 422
 
 
-def test_regional_csv_is_recognized_and_missing_region_is_explained(
-    monkeypatch,
-) -> None:
-    web = client(monkeypatch)
-    authenticate(web)
+def test_regional_csv_is_recognized_and_missing_region_is_explained() -> None:
+    web = client()
     regions, state, _, _ = read_values(REGIONAL)
     rows = [
         "Regionais;Taxa de profissionais",
@@ -145,9 +128,8 @@ def test_regional_csv_is_recognized_and_missing_region_is_explained(
     assert "Faltam Regionais" in missing.json()["detail"]
 
 
-def test_invalid_spreadsheets_have_readable_errors(monkeypatch) -> None:
-    web = client(monkeypatch)
-    authenticate(web)
+def test_invalid_spreadsheets_have_readable_errors() -> None:
+    web = client()
     malformed_csv = web.post(
         "/api/inspect", files={"file": ("dados.csv", b"Regionais;Taxa\n\xff;1")}
     )
