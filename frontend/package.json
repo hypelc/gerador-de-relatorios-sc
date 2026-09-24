@@ -4,18 +4,17 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
-    "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0",
-    "format:check": "prettier --check src index.html vite.config.js package.json"
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "format:check": "prettier --check src next.config.mjs package.json"
   },
   "dependencies": {
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "next": "^16.3.6",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^5.0.0",
-    "prettier": "^3.9.9",
-    "vite": "^7.0.0"
+    "prettier": "^3.9.9"
   }
 }

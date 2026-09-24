@@ -24,7 +24,7 @@ Data Analyse/
 ├── README.md                 especificação e entrada principal do projeto
 ├── gerador_sc/               aplicação atual
 ├── webapp/                   API do piloto web
-├── frontend/                 interface React/Vite do piloto web
+├── frontend/                 interface Next.js do piloto web
 ├── tests/                    testes automatizados
 ├── data/exemplos/            planilhas reais de validação
 ├── geodados/                 malhas e relações territoriais

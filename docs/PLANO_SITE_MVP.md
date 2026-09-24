@@ -1,6 +1,6 @@
 # Gerador de Relatórios SC — plano da primeira versão web
 
-**Planejamento iniciado em 23/09/2026; implementação local iniciada em 24/09/2026.** O objetivo é mostrar um MVP à tia e às colegas e evoluí-lo durante a semana. A publicação da URL ainda depende da escolha e configuração da hospedagem. Este documento define o recorte da primeira entrega do site. O `README.md` continua descrevendo a aplicação desktop existente; o site não promete interpretar qualquer planilha.
+**Planejamento iniciado em 23/09/2026; implementação local iniciada em 24/09/2026.** O objetivo é mostrar um MVP à tia e às colegas e evoluí-lo durante a semana. A arquitetura foi ajustada por escolha do proprietário: interface Next.js na Vercel e API FastAPI no Render. O repositório já existe no GitHub; a publicação da URL ainda depende de enviar este commit e conectar os dois serviços. O `README.md` continua descrevendo a aplicação desktop existente; o site não promete interpretar qualquer planilha.
 
 ## Resultado a entregar
 
@@ -27,9 +27,9 @@ Para arquivos parecidos, mas não idênticos, o site mostra o que encontrou e pe
 
 ## Arquitetura enxuta
 
-- **Uma aplicação web:** interface React/Vite compilada e servida pela mesma aplicação Python/FastAPI. Um único serviço para publicar, sem separar frontend e backend nesta entrega.
+- **Dois serviços no mesmo repositório:** interface Next.js publicada na Vercel, com raiz em `frontend/`, e API FastAPI publicada no Render por Docker. O Next.js encaminha `/api/*` ao Render; para o navegador, login, upload e download continuam na mesma origem. A URL do Render é configurada em `API_BACKEND_URL` no projeto Vercel.
 - **Motor Python reaproveitado:** importação, validação, gráficos, mapas e PDF continuam no Python. A interface Qt fica fora da execução web. Dependências web e desktop devem ficar separadas.
-- **Sem banco de dados e sem contas individuais:** senha compartilhada guardada em variável de ambiente do servidor. Sessão em cookie seguro, sem mostrar a senha no código do navegador. Não haverá histórico nem registro confiável de quem gerou cada relatório; o campo "autores" é informado pela pessoa.
+- **Sem banco de dados e sem contas individuais:** senha compartilhada guardada em variável de ambiente do Render. Sessão em cookie seguro encaminhada pela Vercel, sem mostrar a senha no código do navegador. Não haverá histórico nem registro confiável de quem gerou cada relatório; o campo "autores" é informado pela pessoa.
 - **Sem guardar planilhas ou relatórios:** `inspecionar` recebe o arquivo, devolve o diagnóstico e descarta a cópia temporária. O navegador mantém o arquivo selecionado e o envia novamente em `gerar`, junto com as escolhas. O servidor valida tudo de novo, gera o PDF/PNG, devolve o arquivo e limpa os temporários. Prévia e download usam o mesmo resultado já gerado no navegador.
 - **Proteção operacional mínima:** limite de tamanho e tipo de arquivo, limite de requisições, processamento serial dos gráficos, isolamento e limpeza de diretórios temporários, mensagens de erro sem expor dados da planilha ou segredos. O servidor não executa macros nem fórmulas do Excel. O tempo máximo de requisição deverá ser configurado na hospedagem antes de publicar.
 
@@ -47,7 +47,7 @@ Como ainda não há chave de API e precisamos primeiro provar os dois formatos c
 2. **Expor duas operações web:** inspeção e geração. Todas as escolhas recebidas do navegador são validadas no servidor; diagnóstico legível volta para a interface.
 3. **Montar a interface curta:** login, upload, confirmação dos dados, escolhas compatíveis, prévia e download. Campos avançados ficam recolhidos. Estados de carregamento/erro precisam estar claros.
 4. **Testar ponta a ponta:** os dois arquivos reais, PDF/PNG abrindo, prévia igual ao download, valores e regiões corretos, arquivo inválido, acesso sem senha e limpeza de temporários. Revisar visualmente os PDFs; não basta contar testes automatizados.
-5. **Publicar e testar a URL final:** configurar senha e limites no serviço, fazer upload e download pelo navegador em uma sessão comum, conferir uso em tela estreita e registrar a versão entregue.
+5. **Publicar e testar a URL final:** o proprietário envia o commit ao repositório GitHub existente; Render e Vercel conectam-se à branch `main` para deploy automático. Configurar senha no Render e `API_BACKEND_URL` na Vercel, fazer upload e download pela URL final em uma sessão comum, conferir uso em tela estreita e registrar a versão entregue.
 
 ## Critério de aceite e corte de escopo
 
@@ -57,7 +57,7 @@ Ficam para depois: Jev ativo, planilhas arbitrárias, contas individuais, histó
 
 ## Versionamento e evolução
 
-- **Versionamento:** o repositório Git local foi iniciado. Excluir de commits planilhas reais, relatórios, senhas, arquivos temporários e ambientes virtuais; usar exemplos anonimizados quando possível. Ainda falta configurar um repositório remoto privado.
+- **Versionamento:** o repositório Git local está conectado a `https://github.com/hypelc/gerador-de-relatorios-sc.git`. Excluir de commits planilhas reais, relatórios, senhas, arquivos temporários e ambientes virtuais; usar exemplos anonimizados quando possível. O proprietário optou por enviar os próximos commits ao GitHub por conta própria.
 - **`v0.1.0` — piloto web:** fluxo completo com os dois formatos definidos acima, acesso restrito, prévia e download implementados localmente. Falta validar a URL publicada. A versão aparece no site e na metodologia do PDF.
 - **`v0.1.x` — correções do piloto:** ajustar erros observados sem mudar o significado dos dados nem quebrar planilhas já aceitas. Cada correção tem um caso reproduzível e verificação do PDF.
 - **`v0.2.0` — ampliação por demanda real:** novo formato de planilha ou novo modelo visual somente depois de receber um exemplo e definir seu contrato. Testar Jev com exemplos conhecidos e desconhecidos antes de ativá-lo para usuárias.

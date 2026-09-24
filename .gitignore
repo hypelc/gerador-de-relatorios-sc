@@ -12,6 +12,8 @@ tmp/
 !.env.example
 node_modules/
 frontend/dist/
+frontend/.next/
+frontend/.vercel/
 data/exemplos/
 output/
 archive/

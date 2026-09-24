@@ -2,13 +2,13 @@
 
 > Status: primeira versão local implementada e validada no Linux. Os instaladores de Windows e macOS ainda precisam ser produzidos e testados nos respectivos sistemas.
 
-> **Versão web piloto:** o site agora está em desenvolvimento no mesmo projeto. O fluxo, os limites e a execução da versão web estão em [`docs/PLANO_SITE_MVP.md`](docs/PLANO_SITE_MVP.md) e [`docs/GUIA_WEB.md`](docs/GUIA_WEB.md). O restante deste README preserva a especificação da aplicação desktop.
+> **Versão web piloto:** a interface Next.js e a API FastAPI estão separadas para publicação na Vercel e no Render. O fluxo, os limites e os passos de publicação estão em [`docs/PLANO_SITE_MVP.md`](docs/PLANO_SITE_MVP.md) e [`docs/GUIA_WEB.md`](docs/GUIA_WEB.md). O restante deste README preserva a especificação da aplicação desktop.
 
 ## Como navegar no projeto
 
 - `gerador_sc/`: aplicação desktop atual. Este é o código principal.
 - `webapp/`: API Python da versão web piloto, que reutiliza o motor.
-- `frontend/`: interface React/Vite da versão web piloto.
+- `frontend/`: interface Next.js da versão web piloto.
 - `tests/`: testes do motor e da interface.
 - `data/exemplos/`: planilhas reais usadas para entender e validar formatos.
 - `geodados/`: recursos geográficos usados pelos mapas.
@@ -364,4 +364,4 @@ A interface não deve ler células, calcular escalas ou desenhar gráficos diret
 - Antes do pacote macOS, confirmar a versão do sistema e se o computador usa Apple Silicon ou processador Intel. Produzir o pacote para a arquitetura confirmada; oferecer uma segunda arquitetura ou pacote universal somente depois de validar todas as dependências nesse formato.
 - Pacotes internos de teste podem ser distribuídos sem assinatura, aceitando os avisos do sistema. Uma distribuição simples para pessoas não técnicas exige avaliar certificado de assinatura no Windows e conta Apple Developer para assinatura e notarização no macOS.
 - A pasta de entrega deve conter subpastas `Windows` e `macOS`, cada uma com o instalador, versão, instrução curta e arquivo de integridade correspondente.
-- Este diretório ainda não é um repositório Git e não possui issue tracker configurado. A especificação não foi publicada como issue nem recebeu o rótulo `ready-for-agent`.
+- Este diretório agora é um repositório Git. A especificação desktop não foi publicada como issue nem recebeu o rótulo `ready-for-agent`.

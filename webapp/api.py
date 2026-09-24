@@ -30,8 +30,6 @@ from fastapi import (
     Response,
     UploadFile,
 )
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 from openpyxl.utils.exceptions import InvalidFileException
 from starlette.concurrency import run_in_threadpool
 
@@ -45,7 +43,6 @@ from gerador_sc.regional import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-FRONTEND_DIST = ROOT / "frontend" / "dist"
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_UNPACKED_BYTES = 50 * 1024 * 1024
 VERSION = "0.1.0"
@@ -438,15 +435,6 @@ def create_app() -> FastAPI:
             media_type=media_type,
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
-
-    if FRONTEND_DIST.is_dir():
-        app.mount(
-            "/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets"
-        )
-
-        @app.get("/{path:path}", include_in_schema=False)
-        def frontend(path: str):
-            return FileResponse(FRONTEND_DIST / "index.html")
 
     return app
 

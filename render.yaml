@@ -3,6 +3,8 @@ services:
     name: gerador-relatorios-sc-piloto
     runtime: docker
     plan: free
+    branch: main
+    autoDeployTrigger: commit
     healthCheckPath: /api/health
     envVars:
       - key: APP_ACCESS_PASSWORD
