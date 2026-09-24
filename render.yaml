@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: gerador-relatorios-sc-piloto
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: APP_ACCESS_PASSWORD
+        sync: false
+      - key: APP_SESSION_SECRET
+        generateValue: true

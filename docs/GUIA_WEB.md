@@ -25,6 +25,8 @@ Abra `http://127.0.0.1:8000`. Com `APP_ENV=local`, o cookie funciona em HTTP loc
 
 O `Dockerfile` compila a interface React/Vite e roda a API Python no mesmo serviço. Ele copia o motor e os recursos geográficos, sem copiar as planilhas reais em `data/`, os PDFs em `output/` nem os arquivos históricos em `archive/`. Um serviço que aceite contêiner Docker e HTTPS pode usar esse arquivo. Configure `APP_ACCESS_PASSWORD` e `APP_SESSION_SECRET` no painel do provedor, e uma porta `PORT` se a plataforma exigir. A verificação de saúde está em `/api/health`.
 
+Há também um `render.yaml` pronto para testar o plano gratuito do Render: um único serviço Docker, verificação de saúde e senha solicitada durante a criação. O segredo de sessão é gerado pelo provedor. Nenhuma credencial fica no repositório. O arquivo apenas descreve a publicação; criar o serviço e validar sua URL são etapas separadas.
+
 Escolha o plano de hospedagem após medir tempo e memória com os dois relatórios reais. O upload máximo nesta versão é 10 MB; arquivos `.xlsx` muito expandidos são rejeitados. Cada geração é processada em série para evitar colisões no Matplotlib. O servidor precisa de disco temporário gravável para cada requisição, mas não de volume persistente.
 
 Uma medição local com os arquivos recebidos e um PDF por vez levou aproximadamente 4,5 s para o mapa regional e 3,8 s para um relatório anual de uma tabela; o processo Python atingiu cerca de 185 MB de memória residente. Esses valores são do computador de desenvolvimento e não garantem o desempenho da hospedagem. Antes de liberar a URL, configure no provedor um limite de tempo compatível com gerações maiores e verifique memória e download no serviço publicado.
