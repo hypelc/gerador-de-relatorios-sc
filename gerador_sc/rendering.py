@@ -255,14 +255,16 @@ def _draw_map(axis, geometries: dict[str, object], values: dict[str, float | Non
 
 def _map_values(table: RecognizedTable, year: int) -> dict[str, float | None]:
     position = table.years.index(year)
-    values: dict[str, float | None] = {}
+    values: dict[str, float | None] = {code: None for code in MAP_CODES}
+    seen: set[str] = set()
     for serie in table.series:
         code = serie.code
-        if code in values:
+        if code in seen:
             raise ValueError(f"Codigo geografico repetido: {code}")
+        if code not in values:
+            raise ValueError(f"Codigo geografico sem correspondencia em Santa Catarina: {code}")
+        seen.add(code)
         values[code] = serie.values[position]
-    if set(values) != set(MAP_CODES):
-        raise ValueError("A tabela do mapa precisa conter as oito macrorregioes de saude de Santa Catarina.")
     return values
 
 
@@ -271,12 +273,12 @@ def _map_figure(table: RecognizedTable, config: ReportConfig, year: int, geometr
     fig.text(0.055, 0.95, config.title, fontsize=20, weight="bold", color="#162B40")
     fig.text(0.055, 0.915, f"{_indicator(table, config)} | Santa Catarina | {year}", fontsize=12, color="#52606D")
     axis = fig.add_axes([0.08, 0.28, 0.84, 0.58])
-    _draw_map(axis, geometries, _map_values(table, year))
+    map_values = _map_values(table, year)
+    _draw_map(axis, geometries, map_values)
     axis.set_title("Macrorregioes de saude", loc="left", fontsize=14, weight="bold", pad=13)
     handles = [Patch(facecolor=color, edgecolor="#555", label=label) for color, label in zip(MAP_COLORS, MAP_BANDS)]
     handles.append(Patch(facecolor="#DDDDDD", edgecolor="#555", hatch="///", label="Sem dado"))
     fig.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 0.225), ncol=5, frameon=False, title="Cobertura vacinal (%)")
-    map_values = _map_values(table, year)
     rows = [[f"{number}. {MAP_NAMES[code]}", "Sem dado" if map_values[code] is None else _format_value(map_values[code], table)] for number, code in enumerate(MAP_CODES, 1)]
     table_axis = fig.add_axes([0.17, 0.085, 0.66, 0.14])
     table_axis.axis("off")
@@ -293,6 +295,8 @@ def _map_figure(table: RecognizedTable, config: ReportConfig, year: int, geometr
         footer.append(f"Autores: {config.authors.strip()}")
     if config.source.strip():
         footer.append(f"Fonte informada: {config.source.strip()}")
+    if any(value is None for value in map_values.values()):
+        footer.append("Areas cinzas: regiao ausente da tabela ou valor nao informado para o ano; nenhum valor foi estimado.")
     footer.append("Geografia: limites municipais do IBGE e composicao das macrorregioes publicada pelo Ministerio da Saude.")
     fig.text(0.055, 0.018, "\n".join(footer), fontsize=8, color="#52606D")
     return fig

@@ -69,6 +69,8 @@ def _cell_label(value: object) -> str:
 
 def _indicator_type(sheet: str, title: str) -> tuple[IndicatorType, str]:
     key = _normalise(f"{sheet} {title}").upper()
+    if "ABANDONO" in key or ("TAXA" in key and "COBERTURA" not in key):
+        return "desconhecido", "Taxa informada na planilha"
     if "MORTALIDADE" in key:
         return "mortalidade", "Mortalidade infantil (valor absoluto)"
     if "NASCIDOS" in key:

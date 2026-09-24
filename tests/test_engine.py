@@ -235,6 +235,48 @@ def test_invalid_map_table_is_not_map_ready(tmp_path: Path) -> None:
     assert not table.map_ready
 
 
+@pytest.mark.parametrize(
+    "filename,content",
+    [
+        ("vacina_horizontal.csv", "Macrorregiao;2020;2021;2022\n4210 SUL;25;;0\n4211 NORTE;95;;105\n"),
+        ("vacina_transposta.csv", "Ano;4210 SUL;4211 NORTE\n2020;25;95\n2021;;\n2022;0;105\n"),
+        ("vacina_consolidada.csv", "Indicador;Macrorregiao;Ano;Cobertura\nVACINA ALFA;4210 SUL;2020;25\nVACINA ALFA;4211 NORTE;2020;95\nVACINA ALFA;4210 SUL;2021;\nVACINA ALFA;4211 NORTE;2021;\nVACINA ALFA;4210 SUL;2022;0\nVACINA ALFA;4211 NORTE;2022;105\n"),
+    ],
+)
+def test_partial_map_marks_absent_regions_and_rejects_empty_year(tmp_path: Path, filename: str, content: str) -> None:
+    path = _write_csv(tmp_path / filename, content)
+    service = ReportService()
+    result = service.inspect(path)
+    assert len(result.valid_tables) == 1
+    table = result.valid_tables[0]
+    assert table.map_ready
+    assert table.to_dict()["regioes_mapeadas"] == 2
+    assert table.series[0].values[table.years.index(2022)] == 0
+
+    empty_year = ReportConfig((table.table_id,), "mapa", (2021,), "Mapa parcial")
+    assert any(item.code == "MAP_YEAR_WITHOUT_DATA" for item in service.validate(result, empty_year))
+
+    valid = ReportConfig((table.table_id,), "mapa", (2022,), "Mapa parcial")
+    artifact = service.preview(result, valid)
+    try:
+        page = PdfReader(str(artifact.pdf_path)).pages[0].extract_text()
+        assert artifact.page_count == 2
+        assert "Sem dado" in page
+        assert "0,00%" in page
+        assert "105,00%" in page
+        assert "nenhum valor foi estimado" in page
+    finally:
+        service.cleanup(artifact)
+
+
+def test_abandonment_rate_with_sc_codes_does_not_use_coverage_map(tmp_path: Path) -> None:
+    path = _write_csv(tmp_path / "taxa_de_abandono_da_vacina.csv", "Macrorregiao;2020;2021;2022\n4210 SUL;12;10;9\n4211 NORTE;20;18;17\n")
+    table = ReportService().inspect(path).valid_tables[0]
+    assert table.indicator_type == "desconhecido"
+    assert table.unit == "Taxa informada na planilha"
+    assert not table.map_ready
+
+
 def test_export_cancellation_does_not_publish_or_leave_temporary_file(tmp_path: Path) -> None:
     source = _write_csv(
         tmp_path / "dados.csv",

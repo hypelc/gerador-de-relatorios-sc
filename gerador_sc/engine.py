@@ -92,7 +92,13 @@ def validate_report(result: ImportResult, config: ReportConfig) -> tuple[Diagnos
         if len(selected) != 1:
             diagnostics.append(Diagnostic("error", "MAP_REQUIRES_ONE_TABLE", "O mapa usa uma tabela por vez.", "Montar relatorio", "Selecione uma tabela de cobertura vacinal."))
         elif not selected[0].map_ready:
-            diagnostics.append(Diagnostic("error", "MAP_CONTRACT_NOT_MET", "O mapa foi desabilitado porque a tabela nao contem exatamente as oito macrorregioes de saude de Santa Catarina.", selected[0].source_sheet, "Use uma tabela com os codigos 4210, 4211, 4213, 4214, 4215, 4216, 4217 e 4218."))
+            diagnostics.append(Diagnostic("error", "MAP_CONTRACT_NOT_MET", "O mapa exige cobertura vacinal e codigos unicos de macrorregioes de saude de Santa Catarina.", selected[0].source_sheet, "Use somente os codigos 4210, 4211, 4213, 4214, 4215, 4216, 4217 e 4218; regioes nao presentes serao marcadas como sem dados."))
+        else:
+            for year in config.years:
+                if year in selected[0].years:
+                    position = selected[0].years.index(year)
+                    if all(serie.values[position] is None for serie in selected[0].series):
+                        diagnostics.append(Diagnostic("error", "MAP_YEAR_WITHOUT_DATA", f"Nenhuma macrorregiao possui valor em {year}.", selected[0].source_sheet, "Escolha um ano com pelo menos um valor informado."))
     return tuple(diagnostics)
 
 

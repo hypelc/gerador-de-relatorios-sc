@@ -25,7 +25,7 @@ const modelLabels = {
   ],
   mapa: [
     "Mapa por macrorregião",
-    "Distribuição da cobertura no mapa de SC, para os anos escolhidos.",
+    "Distribuição da cobertura em SC. Regiões sem valor aparecem em cinza.",
   ],
   mapa_regional: [
     "Mapa das Regionais de Saúde",
@@ -239,6 +239,11 @@ export default function App() {
     : [];
   const mapReady =
     selectedTables.length === 1 && selectedTables[0].mapa_disponivel;
+  const mapYearsWithData = mapReady
+    ? selectedTables[0].anos.filter((year, index) =>
+        selectedTables[0].series.some((serie) => serie.valores[index] !== null),
+      )
+    : [];
 
   function clearPreview() {
     if (previewRef.current) URL.revokeObjectURL(previewRef.current);
@@ -632,7 +637,11 @@ export default function App() {
                           )}
                         </span>
                         {table.mapa_disponivel && (
-                          <span className="table-tag">MAPA DISPONÍVEL</span>
+                          <span className="table-tag">
+                            {table.regioes_mapeadas < 8
+                              ? "MAPA PARCIAL"
+                              : "MAPA DISPONÍVEL"}
+                          </span>
                         )}
                       </label>
                     ))}
@@ -782,6 +791,12 @@ export default function App() {
                   }
                   onChoose={(value) => {
                     setModel(value);
+                    if (value === "mapa") {
+                      const available = years.filter((year) =>
+                        mapYearsWithData.includes(year),
+                      );
+                      setYears(available.length ? available : mapYearsWithData);
+                    }
                     if (
                       ["barras", "pizza"].includes(value) &&
                       years.length !== 1
@@ -794,8 +809,16 @@ export default function App() {
             </div>
             {inspection.kind === "annual" && !selectedCategory && !mapReady && (
               <p className="hint-line">
-                O mapa exige uma única tabela com as 8 macrorregiões de saúde de
-                SC.
+                O mapa exige uma tabela de cobertura vacinal com códigos de
+                macrorregiões reais de SC. Regiões ausentes podem aparecer como
+                sem dados.
+              </p>
+            )}
+            {inspection.kind === "annual" && model === "mapa" && mapReady && (
+              <p className="hint-line">
+                {selectedTables[0].regioes_mapeadas} de 8 macrorregiões
+                identificadas na tabela. Regiões ausentes ou sem valor no ano
+                aparecem em cinza; nenhum valor é estimado.
               </p>
             )}
             {inspection.kind === "annual" &&
@@ -824,6 +847,9 @@ export default function App() {
                       className={years.includes(year) ? "checked" : ""}
                     >
                       <input
+                        disabled={
+                          model === "mapa" && !mapYearsWithData.includes(year)
+                        }
                         type={
                           ["barras", "pizza"].includes(model)
                             ? "radio"

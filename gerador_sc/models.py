@@ -9,6 +9,7 @@ from typing import Literal
 
 Severity = Literal["info", "warning", "error"]
 IndicatorType = Literal["vacina", "nascidos", "mortalidade", "contagem", "desconhecido"]
+SC_MACRO_CODES = frozenset({"4210", "4211", "4213", "4214", "4215", "4216", "4217", "4218"})
 
 
 @dataclass(frozen=True)
@@ -81,19 +82,9 @@ class RecognizedTable:
             self.valid
             and
             self.indicator_type == "vacina"
-            and len(codes) == 8
-            and len(set(codes)) == 8
-            and set(codes)
-            == {
-                "4210",
-                "4211",
-                "4213",
-                "4214",
-                "4215",
-                "4216",
-                "4217",
-                "4218",
-            }
+            and bool(codes)
+            and len(set(codes)) == len(codes)
+            and set(codes) <= SC_MACRO_CODES
         )
 
     @property
@@ -118,6 +109,7 @@ class RecognizedTable:
             "tipo_indicador": self.indicator_type,
             "valida": self.valid,
             "mapa_disponivel": self.map_ready,
+            "regioes_mapeadas": len(self.series) if self.map_ready else 0,
             "confianca": self.confidence,
             "estrutura": self.layout,
             "diagnosticos": [diagnostic.to_dict() for diagnostic in self.diagnostics],

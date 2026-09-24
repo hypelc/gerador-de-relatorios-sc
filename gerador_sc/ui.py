@@ -581,11 +581,12 @@ class MainWindow(QMainWindow):
         map_available = len(tables) == 1 and tables[0].map_ready
         self.map_radio.setEnabled(map_available)
         if map_available:
-            self.map_help.setText("Mapa disponivel para esta selecao.")
+            count = len(tables[0].series)
+            self.map_help.setText(f"Mapa disponivel: {count} de 8 macrorregioes identificadas. Areas sem valor ficam cinzas.")
         elif len(tables) == 1 and not tables[0].valid:
             self.map_help.setText("Mapa desabilitado: corrija os problemas da tabela antes de usa-la.")
         else:
-            self.map_help.setText("Mapa desabilitado: selecione uma tabela valida de cobertura com exatamente as oito macrorregioes codificadas.")
+            self.map_help.setText("Mapa desabilitado: selecione uma tabela valida de cobertura com codigos reais de macrorregioes de SC. Regioes ausentes aparecem sem dados.")
         if not map_available and self.map_radio.isChecked():
             self.panel_radio.setChecked(True)
 
