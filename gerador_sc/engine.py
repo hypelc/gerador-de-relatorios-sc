@@ -75,8 +75,19 @@ def validate_report(result: ImportResult, config: ReportConfig) -> tuple[Diagnos
         missing_years = sorted(set(config.years) - set(table.years))
         if missing_years:
             diagnostics.append(Diagnostic("error", "YEAR_NOT_AVAILABLE", f"Os anos {', '.join(map(str, missing_years))} nao existem na tabela '{table.title}'.", table.source_sheet, "Escolha somente anos comuns as tabelas selecionadas."))
-    if config.model not in {"paineis", "linhas", "mapa"}:
+    if config.model not in {"paineis", "linhas", "mapa", "barras", "pizza"}:
         diagnostics.append(Diagnostic("error", "UNKNOWN_MODEL", "Modelo de relatorio desconhecido.", config.model))
+    if config.model in {"barras", "pizza"} and len(config.years) != 1:
+        diagnostics.append(Diagnostic("error", "ONE_YEAR_REQUIRED", "Barras e pizza comparam um ano por vez.", "Montar relatorio", "Selecione um unico ano."))
+    if config.model == "pizza":
+        for table in selected:
+            if table.indicator_type not in {"nascidos", "mortalidade"}:
+                diagnostics.append(Diagnostic("error", "PIE_REQUIRES_COUNTS", "Pizza so representa contagens que compoem um total; taxas e coberturas nao podem ser somadas.", table.source_sheet))
+            elif len(config.years) == 1:
+                index = table.years.index(config.years[0]) if config.years[0] in table.years else None
+                values = [serie.values[index] for serie in table.series] if index is not None else []
+                if any(value is None or value < 0 for value in values) or sum(value for value in values if value is not None) <= 0 or len(values) < 2:
+                    diagnostics.append(Diagnostic("error", "PIE_INVALID_VALUES", "Pizza exige pelo menos duas contagens nao negativas, sem lacunas, com total positivo.", table.source_sheet))
     if config.model == "mapa":
         if len(selected) != 1:
             diagnostics.append(Diagnostic("error", "MAP_REQUIRES_ONE_TABLE", "O mapa usa uma tabela por vez.", "Montar relatorio", "Selecione uma tabela de cobertura vacinal."))

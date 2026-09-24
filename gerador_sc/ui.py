@@ -135,6 +135,7 @@ class MappingDialog(QDialog):
         self.type_combo.addItem("Cobertura vacinal", "vacina")
         self.type_combo.addItem("Nascidos vivos", "nascidos")
         self.type_combo.addItem("Mortalidade", "mortalidade")
+        self.type_combo.addItem("Contagem", "contagem")
         self.type_combo.addItem("Outro indicador", "desconhecido")
         form = QFormLayout()
         form.addRow("Tabela", self.table_combo)

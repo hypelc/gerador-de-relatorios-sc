@@ -22,6 +22,7 @@ from starlette.concurrency import run_in_threadpool
 
 from gerador_sc.engine import ReportService
 from gerador_sc.models import ReportConfig, ReportValidationError
+from gerador_sc.rendering import render_categorical_report
 from gerador_sc.regional import (
     RegionalConfig,
     normalize_name,
@@ -144,12 +145,12 @@ def _inspect(path: Path) -> dict[str, object]:
             ],
         }
     result = ReportService().inspect(path)
-    if not result.valid_tables:
+    if not result.valid_tables and not result.categorical_tables:
         diagnostics = [diagnostic.to_dict() for diagnostic in result.diagnostics]
         raise HTTPException(
             422,
             {
-                "message": "Nenhuma tabela anual válida foi encontrada.",
+                "message": "Nenhuma tabela válida foi encontrada.",
                 "diagnostics": diagnostics,
             },
         )
@@ -157,7 +158,7 @@ def _inspect(path: Path) -> dict[str, object]:
         "kind": "annual",
         "filename": path.name,
         "import": result.to_dict(),
-        "models": ["paineis", "linhas", "mapa"],
+        "models": ["paineis", "linhas", "barras", "pizza", "mapa"],
     }
 
 
@@ -212,6 +213,15 @@ def _generate(path: Path, options: dict[str, object]) -> tuple[bytes, str, str]:
                 422, "O modelo selecionado não corresponde à planilha enviada."
             )
         result = ReportService().inspect(path)
+        if options.get("model") == "barras_categoria":
+            category_id = options.get("category_id")
+            table = next((item for item in result.categorical_tables if item.table_id == category_id), None)
+            if table is None:
+                raise HTTPException(422, "Tabela regional não encontrada na planilha enviada.")
+            target = directory / "relatorio.pdf"
+            with _render_lock:
+                render_categorical_report(table, target, title=title, authors=authors, source=source, unit=unit, period=_text(options.get("period", ""), "período", 80), source_name=path.name)
+            return target.read_bytes(), "application/pdf", _filename(title, "pdf")
         table_ids = options.get("table_ids")
         years = options.get("years")
         confirmed_exclusions = options.get("confirmed_exclusions", [])
@@ -234,7 +244,7 @@ def _generate(path: Path, options: dict[str, object]) -> tuple[bytes, str, str]:
             isinstance(item, str) for item in confirmed_exclusions
         ):
             raise HTTPException(422, "Confirmação de exclusões inválida.")
-        if model not in {"paineis", "linhas", "mapa"}:
+        if model not in {"paineis", "linhas", "barras", "pizza", "mapa"}:
             raise HTTPException(422, "Modelo de gráfico desconhecido.")
         config = ReportConfig(
             tuple(table_ids),

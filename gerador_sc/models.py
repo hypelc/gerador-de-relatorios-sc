@@ -8,7 +8,7 @@ from typing import Literal
 
 
 Severity = Literal["info", "warning", "error"]
-IndicatorType = Literal["vacina", "nascidos", "mortalidade", "desconhecido"]
+IndicatorType = Literal["vacina", "nascidos", "mortalidade", "contagem", "desconhecido"]
 
 
 @dataclass(frozen=True)
@@ -66,6 +66,7 @@ class RecognizedTable:
     indicator_type: IndicatorType
     diagnostics: tuple[Diagnostic, ...] = ()
     confidence: float = 0.0
+    layout: str = "horizontal"
 
     @property
     def valid(self) -> bool:
@@ -118,6 +119,7 @@ class RecognizedTable:
             "valida": self.valid,
             "mapa_disponivel": self.map_ready,
             "confianca": self.confidence,
+            "estrutura": self.layout,
             "diagnosticos": [diagnostic.to_dict() for diagnostic in self.diagnostics],
         }
 
@@ -138,6 +140,27 @@ class SourceSheet:
 
 
 @dataclass(frozen=True)
+class CategoricalTable:
+    table_id: str
+    source_sheet: str
+    title: str
+    header_row: int
+    label_column: int
+    value_column: int
+    categories: tuple[tuple[str, float], ...]
+    state_value: float | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "id": self.table_id, "aba": self.source_sheet, "titulo": self.title,
+            "cabecalho": self.header_row, "coluna_identificacao": self.label_column,
+            "coluna_valor": self.value_column, "categorias": [
+                {"nome": name, "valor": value} for name, value in self.categories
+            ], "valor_estado": self.state_value, "valida": bool(self.categories),
+        }
+
+
+@dataclass(frozen=True)
 class ImportResult:
     source_path: Path
     file_format: Literal["xlsx", "csv"]
@@ -147,6 +170,7 @@ class ImportResult:
     sheet_summaries: tuple[SheetSummary, ...] = ()
     diagnostics: tuple[Diagnostic, ...] = ()
     formula_count: int = 0
+    categorical_tables: tuple[CategoricalTable, ...] = ()
 
     @property
     def valid_tables(self) -> tuple[RecognizedTable, ...]:
@@ -174,6 +198,7 @@ class ImportResult:
                 for summary in self.sheet_summaries
             ],
             "tabelas": [table.to_dict() for table in self.tables],
+            "tabelas_categoricas": [table.to_dict() for table in self.categorical_tables],
             "diagnosticos": [diagnostic.to_dict() for diagnostic in self.diagnostics],
         }
 
@@ -181,7 +206,7 @@ class ImportResult:
 @dataclass(frozen=True)
 class ReportConfig:
     table_ids: tuple[str, ...]
-    model: Literal["paineis", "linhas", "mapa"] = "paineis"
+    model: Literal["paineis", "linhas", "mapa", "barras", "pizza"] = "paineis"
     years: tuple[int, ...] = ()
     title: str = "Relatorio de indicadores de Santa Catarina"
     authors: str = ""

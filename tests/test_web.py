@@ -4,15 +4,24 @@ import io
 import json
 from pathlib import Path
 
+import pytest
+import openpyxl
 from fastapi.testclient import TestClient
 from pypdf import PdfReader
 
 from gerador_sc.regional import read_values
+from gerador_sc.importers import inspect_file
+from webapp import api as api_module
 from webapp.api import create_app
 
 ROOT = Path(__file__).resolve().parents[1]
 ANNUAL = ROOT / "data" / "exemplos" / "BANCO DE DADOS CV - AMANDA E EMILENE.xlsx"
 REGIONAL = ROOT / "data" / "exemplos" / "taxa estado SC.xlsx"
+
+
+@pytest.fixture(autouse=True)
+def reset_test_rate_limits() -> None:
+    api_module._rate_events.clear()
 
 
 def client() -> TestClient:
@@ -23,8 +32,77 @@ def test_public_api_accepts_upload_without_session() -> None:
     web = client()
     response = web.post("/api/inspect", files={"file": ("dados.csv", b"a;b\n1;2")})
     assert response.status_code == 422
-    assert response.json()["detail"]["message"] == "Nenhuma tabela anual válida foi encontrada."
+    assert response.json()["detail"]["message"] == "Nenhuma tabela válida foi encontrada."
     assert web.get("/api/session").status_code == 404
+
+
+@pytest.mark.parametrize("variation,annual_count", [(1, 3), (2, 3), (3, 1), (4, 3), (5, 1)])
+def test_five_fictional_layouts_generate_annual_and_regional_bar_pdfs(variation: int, annual_count: int) -> None:
+    path = ROOT / "tests" / "fixtures" / f"dados_ficticios_variacao_{variation:02d}.xlsx"
+    original = path.read_bytes()
+    files = {"file": (path.name, original)}
+    web = client()
+    inspection = web.post("/api/inspect", files=files)
+    assert inspection.status_code == 200, inspection.text
+    data = inspection.json()
+    annual = [table for table in data["import"]["tabelas"] if table["valida"]]
+    categorical = data["import"]["tabelas_categoricas"]
+    assert len(annual) == annual_count
+    assert len(categorical) == 1
+    assert all(table["anos"] == list(range(2016, 2026)) for table in annual)
+    assert all(not table["mapa_disponivel"] for table in annual)
+    assert len(categorical[0]["categorias"]) == 8
+
+    options = {"kind": "annual", "title": "Comparação das regiões", "authors": "Equipe", "source": "Planilha fictícia", "table_ids": [annual[0]["id"]], "years": [2025], "model": "barras", "confirmed_exclusions": []}
+    pdf = web.post("/api/generate", files=files, data={"options": json.dumps(options)})
+    assert pdf.status_code == 200, pdf.text
+    assert len(PdfReader(io.BytesIO(pdf.content)).pages) == 2
+    options = {"kind": "annual", "title": "Taxa por regional", "authors": "Equipe", "source": "Planilha fictícia", "unit": "taxa", "period": "2025", "model": "barras_categoria", "category_id": categorical[0]["id"]}
+    pdf = web.post("/api/generate", files=files, data={"options": json.dumps(options)})
+    assert pdf.status_code == 200, pdf.text
+    pages = PdfReader(io.BytesIO(pdf.content)).pages
+    assert len(pages) == 2
+    assert "2025" in pages[-1].extract_text()
+    assert path.read_bytes() == original
+
+
+def test_pie_rejects_rates_and_preserves_zero_and_over_100() -> None:
+    path = ROOT / "tests" / "fixtures" / "dados_ficticios_variacao_01.xlsx"
+    web = client()
+    files = {"file": (path.name, path.read_bytes())}
+    table = web.post("/api/inspect", files=files).json()["import"]["tabelas"][0]
+    options = {"kind": "annual", "title": "Tentativa", "table_ids": [table["id"]], "years": [2025], "model": "pizza", "confirmed_exclusions": []}
+    response = web.post("/api/generate", files=files, data={"options": json.dumps(options)})
+    assert response.status_code == 422
+    assert any(item["code"] == "PIE_REQUIRES_COUNTS" for item in response.json()["detail"]["diagnostics"])
+    assert any(value is not None and value > 100 for series in table["series"] for value in series["valores"])
+
+
+def test_pie_generates_for_regional_birth_counts() -> None:
+    web = client()
+    files = {"file": (ANNUAL.name, ANNUAL.read_bytes())}
+    tables = web.post("/api/inspect", files=files).json()["import"]["tabelas"]
+    table = next(item for item in tables if item["aba"] == "NASCIDOS VIVOS SC")
+    options = {"kind": "annual", "title": "Nascidos vivos por região", "table_ids": [table["id"]], "years": [2025], "model": "pizza", "confirmed_exclusions": []}
+    response = web.post("/api/generate", files=files, data={"options": json.dumps(options)})
+    assert response.status_code == 200, response.text
+    assert len(PdfReader(io.BytesIO(response.content)).pages) == 2
+
+
+def test_scrambled_years_keep_original_cell_values_and_unknown_unit() -> None:
+    path = ROOT / "tests" / "fixtures" / "dados_ficticios_variacao_05.xlsx"
+    result = inspect_file(path)
+    table = result.valid_tables[0]
+    workbook = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    try:
+        first_original = workbook.active.cell(6, 4).value
+        label_original = workbook.active.cell(6, 5).value
+    finally:
+        workbook.close()
+    assert table.series[0].name == label_original
+    assert table.series[0].values[table.years.index(2025)] == first_original
+    assert table.indicator_type == "desconhecido"
+    assert table.unit == "Valor informado na planilha"
 
 
 def test_regional_workbook_generates_pdf_and_png_without_changing_source() -> None:

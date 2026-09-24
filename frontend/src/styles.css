@@ -638,6 +638,18 @@ input:focus-visible {
 .model-visual.linhas path + path {
   stroke: #90b8ad;
 }
+.model-visual.barras path,
+.model-visual.barras_categoria path,
+.model-visual.pizza path,
+.model-visual.pizza circle {
+  stroke: #1b8178;
+  stroke-width: 5;
+  fill: none;
+}
+.model-visual.pizza path,
+.model-visual.pizza circle {
+  stroke-width: 2;
+}
 .model-visual.mapa svg path,
 .model-visual.mapa_regional svg path {
   stroke: #1d8279;

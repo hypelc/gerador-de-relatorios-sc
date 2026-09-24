@@ -11,6 +11,18 @@ const modelLabels = {
     "Comparação em linhas",
     "Todas as regiões no mesmo gráfico para comparar trajetórias.",
   ],
+  barras: [
+    "Comparação em barras",
+    "Compare as regiões em um único ano, mantendo os valores originais.",
+  ],
+  pizza: [
+    "Partes de um total",
+    "Somente para contagens regionais; taxas e coberturas não formam um total.",
+  ],
+  barras_categoria: [
+    "Taxa por regional",
+    "Compare as regionais de um único período com barras e referência estadual, quando houver.",
+  ],
   mapa: [
     "Mapa por macrorregião",
     "Distribuição da cobertura no mapa de SC, para os anos escolhidos.",
@@ -146,6 +158,17 @@ function ModelCard({ value, selected, disabled, onChoose }) {
             <path d="M2 51 28 45 53 19 79 33 105 14 137 21" />
           </svg>
         )}
+        {(value === "barras" || value === "barras_categoria") && (
+          <svg viewBox="0 0 140 58">
+            <path d="M10 12h100M10 28h75M10 44h120" />
+          </svg>
+        )}
+        {value === "pizza" && (
+          <svg viewBox="0 0 140 58">
+            <circle cx="70" cy="29" r="23" />
+            <path d="M70 29V6M70 29l20 12" />
+          </svg>
+        )}
         {(value === "mapa" || value === "mapa_regional") && (
           <svg viewBox="0 0 140 58">
             <path d="M15 14 40 6 72 13 91 9 123 24 107 49 73 51 53 43 31 52 12 35Z" />
@@ -171,12 +194,14 @@ export default function App() {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
+  const [categoryId, setCategoryId] = useState("");
   const [years, setYears] = useState([]);
   const [model, setModel] = useState("paineis");
   const [search, setSearch] = useState("");
   const [confirmExclusions, setConfirmExclusions] = useState(false);
   const [meta, setMeta] = useState({
     title: "",
+    indicator: "",
     authors: "",
     source: "",
     unit: "",
@@ -195,6 +220,13 @@ export default function App() {
   );
 
   const tables = inspection?.kind === "annual" ? inspection.import.tabelas : [];
+  const categoryTables =
+    inspection?.kind === "annual"
+      ? inspection.import.tabelas_categoricas || []
+      : [];
+  const selectedCategory = categoryTables.find(
+    (table) => table.id === categoryId,
+  );
   const selectedTables = tables.filter((table) =>
     selectedIds.includes(table.id),
   );
@@ -236,8 +268,9 @@ export default function App() {
         title:
           data.kind === "regional"
             ? data.suggested_title
-            : "Relatório de indicadores de Santa Catarina",
+            : "Relatório de indicadores",
         authors: "",
+        indicator: "",
         source: "",
         unit: "",
         period: "",
@@ -245,10 +278,14 @@ export default function App() {
       if (data.kind === "annual") {
         const first = data.import.tabelas.find((table) => table.valida);
         setSelectedIds(first ? [first.id] : []);
+        setCategoryId(
+          first ? "" : data.import.tabelas_categoricas?.[0]?.id || "",
+        );
         setYears(first?.anos || []);
-        setModel("paineis");
+        setModel(first ? "paineis" : "barras_categoria");
       } else {
         setSelectedIds([]);
+        setCategoryId("");
         setYears([]);
         setModel("mapa_regional");
       }
@@ -262,6 +299,8 @@ export default function App() {
   }
 
   function toggleTable(id) {
+    setCategoryId("");
+    if (model === "barras_categoria") setModel("paineis");
     const next = selectedIds.includes(id)
       ? selectedIds.filter((item) => item !== id)
       : [...selectedIds, id];
@@ -283,6 +322,21 @@ export default function App() {
       !(nextTables.length === 1 && nextTables[0].mapa_disponivel)
     )
       setModel("paineis");
+    if (
+      model === "pizza" &&
+      nextTables.some(
+        (table) => !["nascidos", "mortalidade"].includes(table.tipo_indicador),
+      )
+    )
+      setModel("paineis");
+  }
+
+  function chooseCategory(id) {
+    setCategoryId(id);
+    setSelectedIds([]);
+    setYears([]);
+    setModel("barras_categoria");
+    clearPreview();
   }
 
   function updateMeta(field, value) {
@@ -297,11 +351,14 @@ export default function App() {
       authors: meta.authors.trim(),
       source: meta.source.trim(),
       unit: meta.unit.trim(),
+      indicator_name: meta.indicator.trim(),
     };
     if (inspection.kind === "regional")
       return { ...base, period: meta.period.trim(), format };
     return {
       ...base,
+      ...(selectedCategory ? { category_id: selectedCategory.id } : {}),
+      ...(selectedCategory ? { period: meta.period.trim() } : {}),
       table_ids: selectedIds,
       years,
       model,
@@ -385,7 +442,7 @@ export default function App() {
             </p>
           </div>
           <div className="intro-aside">
-            <span className="aside-number">02</span>
+            <span className="aside-number">05</span>
             <span>
               formatos de planilha
               <br />
@@ -510,7 +567,7 @@ export default function App() {
                 <div className="recognition-grid">
                   <div>
                     <span>Formato reconhecido</span>
-                    <strong>Séries anuais</strong>
+                    <strong>Séries e taxas regionais</strong>
                   </div>
                   <div>
                     <span>Abas</span>
@@ -518,7 +575,7 @@ export default function App() {
                   </div>
                   <div>
                     <span>Tabelas encontradas</span>
-                    <strong>{tables.length}</strong>
+                    <strong>{tables.length + categoryTables.length}</strong>
                   </div>
                   <div>
                     <span>Fórmulas no arquivo</span>
@@ -529,8 +586,7 @@ export default function App() {
                   <div>
                     <h3>Escolha as tabelas</h3>
                     <p>
-                      Cada tabela gera uma página. Selecione uma ou mais para o
-                      PDF.
+                      Selecione séries anuais ou uma taxa regional para o PDF.
                     </p>
                   </div>
                   <input
@@ -578,6 +634,30 @@ export default function App() {
                         {table.mapa_disponivel && (
                           <span className="table-tag">MAPA DISPONÍVEL</span>
                         )}
+                      </label>
+                    ))}
+                  {categoryTables
+                    .filter((table) =>
+                      `${table.titulo} ${table.aba}`
+                        .toLowerCase()
+                        .includes(search.toLowerCase()),
+                    )
+                    .map((table) => (
+                      <label key={table.id} className="table-row">
+                        <input
+                          type="radio"
+                          name="categoria"
+                          checked={categoryId === table.id}
+                          onChange={() => chooseCategory(table.id)}
+                        />
+                        <span className="table-title">
+                          <strong>{table.titulo}</strong>
+                          <small>
+                            {table.aba} · período único ·{" "}
+                            {table.categorias.length} regionais
+                          </small>
+                        </span>
+                        <span className="table-tag">BARRAS</span>
                       </label>
                     ))}
                 </div>
@@ -654,8 +734,8 @@ export default function App() {
                 type="button"
                 disabled={
                   inspection.kind === "annual" &&
-                  (!selectedIds.length ||
-                    (invalidTables.length && !confirmExclusions))
+                  ((!selectedIds.length && !categoryId) ||
+                    (!categoryId && invalidTables.length && !confirmExclusions))
                 }
                 onClick={() => {
                   setError(null);
@@ -682,30 +762,61 @@ export default function App() {
             <div className="model-grid">
               {(inspection.kind === "regional"
                 ? ["mapa_regional"]
-                : ["paineis", "linhas", "mapa"]
+                : selectedCategory
+                  ? ["barras_categoria"]
+                  : ["paineis", "linhas", "barras", "pizza", "mapa"]
               ).map((value) => (
                 <ModelCard
                   key={value}
                   value={value}
                   selected={model === value}
-                  disabled={value === "mapa" && !mapReady}
+                  disabled={
+                    (value === "mapa" && !mapReady) ||
+                    (value === "pizza" &&
+                      selectedTables.some(
+                        (table) =>
+                          !["nascidos", "mortalidade"].includes(
+                            table.tipo_indicador,
+                          ),
+                      ))
+                  }
                   onChoose={(value) => {
                     setModel(value);
+                    if (
+                      ["barras", "pizza"].includes(value) &&
+                      years.length !== 1
+                    )
+                      setYears(commonYears.length ? [commonYears.at(-1)] : []);
                     clearPreview();
                   }}
                 />
               ))}
             </div>
-            {inspection.kind === "annual" && !mapReady && (
+            {inspection.kind === "annual" && !selectedCategory && !mapReady && (
               <p className="hint-line">
                 O mapa exige uma única tabela com as 8 macrorregiões de saúde de
                 SC.
               </p>
             )}
-            {inspection.kind === "annual" && (
+            {inspection.kind === "annual" &&
+              !selectedCategory &&
+              selectedTables.some(
+                (table) =>
+                  !["nascidos", "mortalidade"].includes(table.tipo_indicador),
+              ) && (
+                <p className="hint-line">
+                  Pizza fica indisponível para taxas e coberturas: seus valores
+                  não são partes de um total.
+                </p>
+              )}
+            {inspection.kind === "annual" && !selectedCategory && (
               <div className="field-section">
                 <h3>Anos do relatório</h3>
-                <p>Use os anos comuns às tabelas escolhidas.</p>
+                <p>
+                  {["barras", "pizza"].includes(model)
+                    ? "Escolha um único ano para comparar as regiões."
+                    : "Use os anos comuns às tabelas escolhidas."}
+                </p>
                 <div className="year-chips">
                   {commonYears.map((year) => (
                     <label
@@ -713,13 +824,24 @@ export default function App() {
                       className={years.includes(year) ? "checked" : ""}
                     >
                       <input
-                        type="checkbox"
+                        type={
+                          ["barras", "pizza"].includes(model)
+                            ? "radio"
+                            : "checkbox"
+                        }
+                        name={
+                          ["barras", "pizza"].includes(model)
+                            ? "ano"
+                            : undefined
+                        }
                         checked={years.includes(year)}
                         onChange={() => {
                           setYears((current) =>
-                            current.includes(year)
-                              ? current.filter((item) => item !== year)
-                              : [...current, year].sort(),
+                            ["barras", "pizza"].includes(model)
+                              ? [year]
+                              : current.includes(year)
+                                ? current.filter((item) => item !== year)
+                                : [...current, year].sort(),
                           );
                           clearPreview();
                         }}
@@ -769,7 +891,29 @@ export default function App() {
                     placeholder="Ex.: planilha da pesquisa"
                   />
                 </label>
-                {inspection.kind === "regional" && (
+                {inspection.kind === "annual" &&
+                  !selectedCategory &&
+                  selectedTables.some(
+                    (table) => table.tipo_indicador === "desconhecido",
+                  ) && (
+                    <label>
+                      Nome do indicador
+                      <input
+                        value={meta.indicator}
+                        maxLength={80}
+                        onChange={(event) =>
+                          updateMeta("indicator", event.target.value)
+                        }
+                        placeholder="Ex.: índice de profissionais"
+                      />
+                    </label>
+                  )}
+                {(inspection.kind === "regional" ||
+                  selectedCategory ||
+                  (inspection.kind === "annual" &&
+                    selectedTables.some(
+                      (table) => table.tipo_indicador === "desconhecido",
+                    ))) && (
                   <>
                     <label>
                       Unidade{" "}
@@ -782,18 +926,20 @@ export default function App() {
                         placeholder="Ex.: por 1.000 habitantes"
                       />
                     </label>
-                    <label>
-                      Período{" "}
-                      <input
-                        value={meta.period}
-                        maxLength={80}
-                        onChange={(event) =>
-                          updateMeta("period", event.target.value)
-                        }
-                        placeholder="Ex.: 2025"
-                      />
-                    </label>
                   </>
+                )}
+                {(inspection.kind === "regional" || selectedCategory) && (
+                  <label>
+                    Período{" "}
+                    <input
+                      value={meta.period}
+                      maxLength={80}
+                      onChange={(event) =>
+                        updateMeta("period", event.target.value)
+                      }
+                      placeholder="Ex.: 2025"
+                    />
+                  </label>
                 )}
               </div>
             </div>
@@ -813,6 +959,7 @@ export default function App() {
                   !!busy ||
                   !meta.title.trim() ||
                   (inspection.kind === "annual" &&
+                    !selectedCategory &&
                     (!selectedIds.length || !years.length))
                 }
                 onClick={() => generate()}

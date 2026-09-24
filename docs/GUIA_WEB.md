@@ -1,6 +1,6 @@
 # Rodar e publicar o Gerador de Relatórios SC na web
 
-Esta é a versão piloto `0.1.0`. Ela reconhece dois contratos de planilha: séries anuais por macrorregião e um indicador por 17 Regionais de Saúde. A identificação é feita por regras de formato; o Jev ainda não participa. A planilha é enviada ao servidor na inspeção e novamente na geração, mas não é salva permanentemente. Não há login, banco de dados nem histórico de relatórios. Qualquer pessoa com a URL pode usar o gerador.
+Esta é a versão piloto `0.1.0`. Ela reconhece séries anuais por macrorregião, tabelas regionais de período único e o contrato específico de 17 Regionais de Saúde de SC. Os cinco exemplos fictícios em `tests/fixtures/` cobrem anos em ordem normal, descendente ou misturada, séries transpostas, banco consolidado em linhas e múltiplos blocos na mesma aba. A identificação é feita por regras de formato; o Jev ainda não participa. A planilha é enviada ao servidor na inspeção e novamente na geração, mas não é salva permanentemente. Não há login, banco de dados nem histórico de relatórios. Qualquer pessoa com a URL pode usar o gerador.
 
 A interface Next.js fica na Vercel e a API FastAPI no Render. O navegador usa somente a URL da Vercel; o Next.js encaminha `/api/*` ao Render. Assim, o envio das planilhas e o download dos PDFs usam a mesma origem para a usuária.
 
@@ -69,11 +69,11 @@ Antes de compartilhar a URL, abra o site em uma janela comum do navegador, impor
 
 1. A interface envia o arquivo a `/api/inspect`.
 2. O servidor lê o formato, valida a estrutura e devolve as tabelas ou Regionais reconhecidas; apaga o temporário.
-3. A usuária confere os dados e escolhe um modelo visual compatível.
+3. A usuária confere os dados e escolhe um modelo visual compatível. Séries anuais oferecem painéis, linhas e barras; mapa somente com os oito códigos reais de SC. Pizza só é oferecida para contagens regionais aditivas, de um ano, sem lacunas; taxas e coberturas não são partes de um total. Tabelas regionais de período único geram barras com o valor estadual como referência, quando houver.
 4. A interface reenvia o mesmo arquivo e as escolhas a `/api/generate`. O servidor valida tudo de novo, gera PDF ou PNG e apaga os temporários.
 5. O navegador mantém o PDF da prévia para download. A interface não guarda relatórios de sessões anteriores.
 
-Os números vêm da planilha. Células vazias de séries anuais continuam ausentes e zeros continuam zero. O mapa das 17 Regionais exige correspondência completa dos nomes com a composição geográfica utilizada. Quando o arquivo não atende a um contrato, o site mostra o problema em vez de escolher um relatório arbitrário.
+Os números vêm da planilha. Anos fora de ordem são apresentados cronologicamente mantendo a correspondência original entre ano e valor. Colunas `MÉDIA` e `TOTAL` não entram na série anual. Células vazias continuam ausentes, zeros continuam zero e valores acima de 100% são preservados. Se o indicador não estiver identificado, o sistema usa `Valor informado na planilha`, sem supor que seja cobertura vacinal. As regiões fictícias dos exemplos não são desenhadas no mapa de SC. O mapa das 17 Regionais exige correspondência completa dos nomes com a composição geográfica utilizada. Quando o arquivo não atende a um contrato, o site mostra o problema em vez de escolher um relatório arbitrário.
 
 ## Próximas versões
 

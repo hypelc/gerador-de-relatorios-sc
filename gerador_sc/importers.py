@@ -13,6 +13,7 @@ from typing import Iterable, Literal
 import openpyxl
 
 from .models import (
+    CategoricalTable,
     Diagnostic,
     ImportResult,
     IndicatorType,
@@ -72,12 +73,12 @@ def _indicator_type(sheet: str, title: str) -> tuple[IndicatorType, str]:
         return "mortalidade", "Mortalidade infantil (valor absoluto)"
     if "NASCIDOS" in key:
         return "nascidos", "Nascidos vivos (numero)"
-    if "VACINA" in key or "IMUNIZ" in key or "COBERTURA" in key:
+    if "TOTAL DE IMUNIZ" in key:
+        return "contagem", "Numero de imunizacoes"
+    vaccine_names = ("BCG", "HEPATITE", "PENTA", "POLIOMIELITE", "ROTAVIRUS", "PNEUMOCOC", "MENINGOCOC", "DTP", "FEBRE AMARELA", "TRIPLICE VIRAL", "VARICELA")
+    if "VACINA" in key or "COBERTURA" in key or any(name in key for name in vaccine_names):
         return "vacina", "Cobertura vacinal (%)"
-    # O contrato inicial e composto por tabelas de cobertura; mantemos essa
-    # sugestao para nomes de aba curtos como BCG, PENTA e VARICELA. A usuaria
-    # ainda pode trocar o tipo na etapa de mapeamento.
-    return "vacina", "Cobertura vacinal (%)"
+    return "desconhecido", "Valor informado na planilha"
 
 
 def _title_from_rows(sheet_name: str, rows: tuple[tuple[object, ...], ...], header_index: int) -> str:
@@ -98,10 +99,27 @@ def _year_cells(row: tuple[object, ...]) -> list[tuple[int, int]]:
 
 
 def _find_label_column(rows: tuple[tuple[object, ...], ...], header_index: int, first_year_column: int) -> int:
-    for column in range(first_year_column - 1, -1, -1):
-        if any(_cell_label(row[column] if column < len(row) else None) for row in rows[header_index + 1 :]):
-            return column
+    header = rows[header_index]
+    year_columns = {column for column, _ in _year_cells(header)}
+    candidates = []
+    for column, value in enumerate(header):
+        if column in year_columns or _normalise(value).strip().upper() in {"MEDIA", "TOTAL"}:
+            continue
+        labels = [_cell_label(row[column] if column < len(row) else None) for row in rows[header_index + 1:header_index + 20]]
+        text_count = sum(bool(label) and _as_year(label) is None and not _is_number(label) for label in labels)
+        heading = _normalise(value).upper()
+        score = text_count + (100 if any(word in heading for word in ("REGIAO", "REGIONAL", "MUNICIPIO")) else 0)
+        candidates.append((score, column))
+    if candidates:
+        return max(candidates)[1]
     return max(0, first_year_column - 1)
+
+
+def _is_number(value: object) -> bool:
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
 
 
 def _cell_reference(row: int, column: int) -> str:
@@ -145,8 +163,9 @@ def _parse_table(
                 "Escolha uma linha de cabecalho que contenha tres ou mais anos.",
             )
         )
-    years = tuple(year for _, year in year_cells)
-    columns = tuple(column for column, _ in year_cells)
+    ordered_cells = sorted(year_cells, key=lambda item: item[1])
+    years = tuple(year for _, year in ordered_cells)
+    columns = tuple(column for column, _ in ordered_cells)
     if label_column in columns:
         diagnostics.append(
             Diagnostic(
@@ -157,16 +176,18 @@ def _parse_table(
                 "Escolha uma coluna de identificacao fora do conjunto de anos.",
             )
         )
-    if len(set(years)) != len(years) or list(years) != sorted(years):
+    if len(set(years)) != len(years):
         diagnostics.append(
             Diagnostic(
                 "error",
                 "YEARS_NOT_ORDERED",
-                "Os anos do cabecalho estao duplicados ou fora de ordem.",
+                "O cabecalho contem anos duplicados.",
                 f"Aba {source_sheet.name}, linha {header_index + 1}",
-                "Mantenha cada ano uma vez e em ordem crescente.",
+                "Mantenha cada ano uma vez.",
             )
         )
+    elif year_cells != ordered_cells:
+        diagnostics.append(Diagnostic("info", "YEARS_REORDERED", "Os anos foram colocados em ordem cronologica no grafico, sem modificar os valores.", f"Aba {source_sheet.name}, linha {header_index + 1}"))
 
     end = next_header_index if next_header_index is not None else len(rows)
     series: list[Series] = []
@@ -308,6 +329,134 @@ def _parse_source(path: Path) -> tuple[tuple[SourceSheet, ...], Literal["xlsx", 
     raise ValueError("Formato nao suportado. Escolha um arquivo .xlsx ou .csv.")
 
 
+def _parse_transposed(sheet: SourceSheet, source_hash: str) -> list[RecognizedTable]:
+    rows = sheet.rows
+    for header_index, header in enumerate(rows):
+        year_column = next((column for column, value in enumerate(header) if _normalise(value).strip().upper() == "ANO"), None)
+        if year_column is None:
+            continue
+        regions = [(column, _cell_label(value)) for column, value in enumerate(header) if column != year_column and _cell_label(value) and _as_year(value) is None]
+        if len(regions) < 2:
+            continue
+        year_rows = []
+        for row_index in range(header_index + 1, len(rows)):
+            row = rows[row_index]
+            year = _as_year(row[year_column] if year_column < len(row) else None)
+            if year is None:
+                if year_rows:
+                    break
+                continue
+            year_rows.append((row_index, year))
+        if len(year_rows) < 3:
+            continue
+        diagnostics = []
+        if len({year for _, year in year_rows}) != len(year_rows):
+            diagnostics.append(Diagnostic("error", "DUPLICATE_YEAR", "Ha anos repetidos na coluna Ano.", f"Aba {sheet.name}"))
+        ordered = sorted(year_rows, key=lambda pair: pair[1])
+        series = []
+        for column, label in regions:
+            values = []
+            for row_index, _ in ordered:
+                row = rows[row_index]
+                value = row[column] if column < len(row) else None
+                if value is None or value == "":
+                    values.append(None)
+                elif _is_number(value):
+                    values.append(float(value))
+                else:
+                    diagnostics.append(Diagnostic("error", "INVALID_VALUE", "Valor nao numerico na serie transposta.", f"Aba {sheet.name}, celula {_cell_reference(row_index, column)}"))
+                    values.append(None)
+            series.append(Series(label, tuple(values), header_index + 1))
+        title = next((str(value).strip() for row in rows[ordered[-1][0] + 1:] for value in row if value is not None and "VACINA" in _normalise(value).upper()), sheet.name)
+        indicator, unit = _indicator_type(sheet.name, title)
+        return [RecognizedTable(hashlib.sha1(f"{source_hash}:{sheet.name}:transposed".encode()).hexdigest()[:14], sheet.name, title, header_index + 1, year_column + 1, tuple(year for _, year in ordered), (), tuple(series), unit, indicator, tuple(diagnostics), 0.85, "transposed")]
+    return []
+
+
+def _parse_long(sheet: SourceSheet, source_hash: str) -> list[RecognizedTable]:
+    for header_index, row in enumerate(sheet.rows):
+        normalized = [_normalise(value).strip().upper() for value in row]
+        try:
+            indicator_column = normalized.index("INDICADOR")
+            region_column = normalized.index("MACRORREGIAO")
+            year_column = normalized.index("ANO")
+            value_column = next(i for i, value in enumerate(normalized) if value in {"COBERTURA", "VALOR", "TAXA"})
+        except (ValueError, StopIteration):
+            continue
+        groups: dict[str, dict[str, dict[int, float | None]]] = {}
+        source_rows: dict[tuple[str, str], int] = {}
+        diagnostics: dict[str, list[Diagnostic]] = {}
+        for row_index in range(header_index + 1, len(sheet.rows)):
+            record = sheet.rows[row_index]
+            if _is_blank_row(record):
+                continue
+            if len(record) <= max(indicator_column, region_column, year_column, value_column):
+                continue
+            indicator = _cell_label(record[indicator_column])
+            region = _cell_label(record[region_column])
+            year = _as_year(record[year_column])
+            if not indicator or not region or year is None:
+                continue
+            value = record[value_column]
+            bucket = groups.setdefault(indicator, {}).setdefault(region, {})
+            issues = diagnostics.setdefault(indicator, [])
+            if year in bucket:
+                issues.append(Diagnostic("error", "DUPLICATE_POINT", "Ha mais de um valor para o mesmo indicador, regiao e ano.", f"Aba {sheet.name}, linha {row_index + 1}"))
+            if value is None or value == "":
+                bucket[year] = None
+            elif _is_number(value):
+                bucket[year] = float(value)
+            else:
+                issues.append(Diagnostic("error", "INVALID_VALUE", "Valor nao numerico na tabela consolidada.", f"Aba {sheet.name}, linha {row_index + 1}"))
+                bucket[year] = None
+            source_rows[(indicator, region)] = min(source_rows.get((indicator, region), row_index + 1), row_index + 1)
+        tables = []
+        for indicator_name, regions in groups.items():
+            years = tuple(sorted({year for points in regions.values() for year in points}))
+            if len(years) < 3:
+                continue
+            series = tuple(Series(name, tuple(points.get(year) for year in years), source_rows[(indicator_name, name)]) for name, points in regions.items())
+            kind, unit = _indicator_type(indicator_name, indicator_name)
+            tables.append(RecognizedTable(hashlib.sha1(f"{source_hash}:{sheet.name}:{indicator_name}".encode()).hexdigest()[:14], sheet.name, indicator_name, header_index + 1, region_column + 1, years, (year_column + 1,), series, unit, kind, tuple(diagnostics.get(indicator_name, ())), 0.9, "long"))
+        return tables
+    return []
+
+
+def _parse_categorical(sheet: SourceSheet, source_hash: str) -> list[CategoricalTable]:
+    tables = []
+    for header_index, row in enumerate(sheet.rows):
+        for label_column, heading in enumerate(row):
+            key = _normalise(heading).strip().upper()
+            if key not in {"REGIONAIS", "REGIONAL", "REGIAO"}:
+                continue
+            value_column = next((column for column, value in enumerate(row) if column != label_column and any(word in _normalise(value).upper() for word in ("TAXA", "INDICE", "VALOR"))), None)
+            if value_column is None:
+                continue
+            categories = []
+            state_value = None
+            for record in sheet.rows[header_index + 1:]:
+                if _is_blank_row(record) and categories:
+                    break
+                name = _cell_label(record[label_column] if label_column < len(record) else None)
+                value = record[value_column] if value_column < len(record) else None
+                if not name or value is None or value == "":
+                    if categories:
+                        break
+                    continue
+                if not _is_number(value):
+                    if categories:
+                        break
+                    continue
+                if _normalise(name).upper().startswith(("ESTADO", "SANTA CATARINA")):
+                    state_value = float(value)
+                else:
+                    categories.append((name, float(value)))
+            if len(categories) >= 2:
+                title = _cell_label(row[value_column])
+                tables.append(CategoricalTable(hashlib.sha1(f"{source_hash}:{sheet.name}:category:{header_index}".encode()).hexdigest()[:14], sheet.name, title, header_index + 1, label_column + 1, value_column + 1, tuple(categories), state_value))
+    return tables
+
+
 def inspect_file(path: str | Path) -> ImportResult:
     source_path = Path(path).expanduser().resolve()
     if not source_path.exists() or not source_path.is_file():
@@ -318,8 +467,16 @@ def inspect_file(path: str | Path) -> ImportResult:
     sheets, file_format, formula_count, diagnostics = _parse_source(source_path)
     source_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
     tables: list[RecognizedTable] = []
+    categorical_tables: list[CategoricalTable] = []
     summaries: list[SheetSummary] = []
     for sheet in sheets:
+        special = _parse_long(sheet, source_hash) or _parse_transposed(sheet, source_hash)
+        categorical = _parse_categorical(sheet, source_hash)
+        categorical_tables.extend(categorical)
+        if special:
+            tables.extend(special)
+            summaries.append(SheetSummary(sheet.name, len(special) + len(categorical), "reconhecida", f"{len(special) + len(categorical)} tabela(s) candidata(s)."))
+            continue
         header_rows = list(_candidate_header_rows(sheet))
         sheet_table_count = 0
         for index, header_index in enumerate(header_rows):
@@ -336,8 +493,9 @@ def inspect_file(path: str | Path) -> ImportResult:
             table = _parse_table(sheet, header_index, label_column, table_id, next_header_index=next_header)
             tables.append(table)
             sheet_table_count += 1
-        if sheet_table_count:
-            summaries.append(SheetSummary(sheet.name, sheet_table_count, "reconhecida", f"{sheet_table_count} tabela(s) candidata(s)."))
+        if sheet_table_count or categorical:
+            count = sheet_table_count + len(categorical)
+            summaries.append(SheetSummary(sheet.name, count, "reconhecida", f"{count} tabela(s) candidata(s)."))
         else:
             diagnostic = Diagnostic(
                 "warning",
@@ -349,7 +507,7 @@ def inspect_file(path: str | Path) -> ImportResult:
             diagnostics.append(diagnostic)
             summaries.append(SheetSummary(sheet.name, 0, "nao reconhecida", diagnostic.message))
 
-    if not tables:
+    if not tables and not categorical_tables:
         diagnostics.append(
             Diagnostic(
                 "error",
@@ -368,6 +526,7 @@ def inspect_file(path: str | Path) -> ImportResult:
         sheet_summaries=tuple(summaries),
         diagnostics=tuple(diagnostics),
         formula_count=formula_count,
+        categorical_tables=tuple(categorical_tables),
     )
 
 
@@ -414,4 +573,5 @@ def remap_table(
         sheet_summaries=result.sheet_summaries,
         diagnostics=result.diagnostics,
         formula_count=result.formula_count,
+        categorical_tables=result.categorical_tables,
     )

@@ -20,7 +20,7 @@ import matplotlib.patheffects as effects
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 
 from .geography import MAP_BANDS, MAP_CODES, MAP_COLORS, MAP_NAMES, band, load_projected_geometries
-from .models import RecognizedTable, ReportConfig, Series
+from .models import CategoricalTable, RecognizedTable, ReportConfig, Series
 
 
 PALETTES = {
@@ -100,6 +100,8 @@ def _maximum(table: RecognizedTable, selected_years: tuple[int, ...]) -> float:
 def _format_value(value: float, table: RecognizedTable) -> str:
     if table.indicator_type == "vacina":
         return f"{value:.2f}%".replace(".", ",")
+    if table.indicator_type == "desconhecido":
+        return f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return f"{value:,.0f}".replace(",", ".")
 
 
@@ -113,6 +115,30 @@ def _missing_note(table: RecognizedTable, selected_years: tuple[int, ...]) -> st
 
 def _chart_figure(table: RecognizedTable, config: ReportConfig) -> tuple[plt.Figure, bool]:
     selected_years = config.years
+    if config.model in {"barras", "pizza"}:
+        fig, axis = plt.subplots(figsize=(14, 8))
+        fig.subplots_adjust(left=0.30 if config.model == "barras" else 0.08, right=0.91, top=0.76, bottom=0.17)
+        labels = [_series_name(serie) for serie in table.series]
+        values = [_values_for_years(table, selected_years, serie)[0] for serie in table.series]
+        colors = PALETTES.get(config.palette, PALETTES["Acessivel"])
+        if config.model == "barras":
+            positions = list(range(len(labels)))
+            axis.barh(positions, [0 if value is None else value for value in values], color=["#D2D7DC" if value is None else colors[i % len(colors)] for i, value in enumerate(values)])
+            axis.set_yticks(positions, [textwrap.fill(label, 29) for label in labels])
+            axis.invert_yaxis()
+            axis.set_xlabel(_unit(table, config))
+            axis.grid(axis="x", color="#E0E5EB", linewidth=0.7)
+            axis.set_axisbelow(True)
+            for position, value in enumerate(values):
+                if value is not None:
+                    axis.text(value, position, "  " + _format_value(value, table), va="center", fontsize=9)
+                else:
+                    axis.text(0, position, "  dado ausente", va="center", fontsize=9)
+            axis.set_xlim(0, max(1, max((value for value in values if value is not None), default=1) * 1.23))
+        else:
+            axis.pie(values, labels=[textwrap.fill(label, 24) for label in labels], autopct="%1.1f%%", startangle=90, colors=[colors[i % len(colors)] for i in range(len(labels))], textprops={"fontsize": 9})
+            axis.axis("equal")
+        return fig, False
     panel = config.model == "paineis" and len(table.series) > 1
     quantity = len(table.series)
     if panel:
@@ -177,9 +203,9 @@ def _chart_figure(table: RecognizedTable, config: ReportConfig) -> tuple[plt.Fig
 
 
 def _chart_header(fig: plt.Figure, table: RecognizedTable, config: ReportConfig, panel: bool, source_name: str) -> None:
-    fig.text(0.08, 0.94 if panel else 0.93, "SANTA CATARINA", fontsize=11, color="#52606D", weight="bold")
+    fig.text(0.08, 0.94 if panel else 0.93, "SANTA CATARINA" if table.map_ready else "DADOS DA PLANILHA", fontsize=11, color="#52606D", weight="bold")
     fig.text(0.08, 0.90 if panel else 0.875, _indicator(table, config), fontsize=18, weight="bold", color="#162B40")
-    subtitle = f"{config.years[0]} - {config.years[-1]} | " + ("Por macrorregiao de saude" if len(table.series) > 1 else "Serie selecionada")
+    subtitle = (f"{config.years[0]}" if len(config.years) == 1 else f"{config.years[0]} - {config.years[-1]}") + " | " + ("Por regiao" if len(table.series) > 1 else "Serie selecionada")
     if panel:
         subtitle += " | Mesma escala em todos os paineis"
     fig.text(0.08, 0.865 if panel else 0.83, subtitle, color="#52606D")
@@ -191,6 +217,8 @@ def _chart_header(fig: plt.Figure, table: RecognizedTable, config: ReportConfig,
         notes.append("Valores originais; coberturas acima de 100% preservadas. Colunas de media e total excluidas.")
     elif table.indicator_type == "mortalidade":
         notes.append("Valores absolutos da planilha; nao representam uma taxa por mil nascidos vivos.")
+    if config.model == "pizza":
+        notes.append("Fatias calculadas sobre a soma das contagens regionais selecionadas; percentuais nao sao taxas originais.")
     fig.text(0.08, 0.04, "\n".join(notes), fontsize=8.5, color="#52606D", linespacing=1.55)
 
 
@@ -300,7 +328,7 @@ def _methodology_page(tables: tuple[RecognizedTable, ...], config: ReportConfig,
     fig.text(0.08, 0.54, introduction, fontsize=9.2, color="#273444", va="top", linespacing=1.1)
     fig.text(0.08, 0.42, "Colunas de origem confirmadas:", fontsize=10.5, color="#273444", weight="bold")
     fields = [
-        f"{table.source_sheet.strip()}: ID {table.label_column}, cabecalho {table.header_row}, anos col. {_format_year_columns(table.year_columns)}."
+        f"{table.source_sheet.strip()}: estrutura {table.layout}, identificacao col. {table.label_column}, cabecalho {table.header_row}, " + (f"anos col. {_format_year_columns(table.year_columns)}." if table.layout == "horizontal" else "anos lidos das linhas da tabela.")
         for table in tables
     ]
     if len(fields) <= 12:
@@ -376,3 +404,43 @@ def render_report(
         plt.close(figure)
     _progress(progress, 100, "Relatorio pronto")
     return tuple(preview_images), page_number
+
+
+def render_categorical_report(table: CategoricalTable, output_pdf: Path, *, title: str, authors: str, source: str, unit: str, period: str, source_name: str) -> None:
+    """Compara taxas/indices independentes sem transforma-los em parcelas de um total."""
+    plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 11, "axes.spines.top": False, "axes.spines.right": False, "pdf.fonttype": 42})
+    names = [name for name, _ in table.categories]
+    values = [value for _, value in table.categories]
+    fig, axis = plt.subplots(figsize=(14, max(7, 0.48 * len(names) + 3.5)))
+    fig.subplots_adjust(left=0.29, right=0.92, top=0.76, bottom=0.16)
+    positions = list(range(len(names)))
+    axis.barh(positions, values, color="#0072B2")
+    axis.set_yticks(positions, [textwrap.fill(name, 28) for name in names])
+    axis.invert_yaxis()
+    axis.set_xlabel(unit or "Valor informado na planilha")
+    axis.grid(axis="x", color="#E0E5EB", linewidth=0.7)
+    axis.set_axisbelow(True)
+    maximum = max(values + ([table.state_value] if table.state_value is not None else []), default=1)
+    axis.set_xlim(min(0, min(values, default=0)), maximum * 1.25 if maximum > 0 else 1)
+    for position, value in enumerate(values):
+        axis.text(value, position, f"  {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), va="center", fontsize=9)
+    if table.state_value is not None:
+        axis.axvline(table.state_value, color="#C44E52", linestyle="--", linewidth=1.8, label=f"Valor do estado: {table.state_value:.2f}".replace(".", ","))
+        fig.text(0.70, 0.79, f"-- Valor do estado: {table.state_value:.2f}".replace(".", ","), fontsize=10, color="#C44E52")
+    fig.text(0.08, 0.93, "DADOS DA PLANILHA", fontsize=11, color="#52606D", weight="bold")
+    fig.text(0.08, 0.88, textwrap.fill(title, 66), fontsize=18, weight="bold", color="#162B40")
+    fig.text(0.08, 0.81, f"Comparacao por regional | Indicador: {table.title}" + (f" | Periodo: {period}" if period else ""), color="#52606D")
+    fig.text(0.08, 0.055, f"Arquivo: {source_name} | Aba: {table.source_sheet} | Valores originais, sem estimativa ou soma de taxas.", fontsize=9, color="#52606D")
+    method = plt.figure(figsize=(11.69, 8.27))
+    method.text(0.08, 0.90, "Metodologia e origem dos dados", fontsize=21, weight="bold", color="#162B40")
+    lines = [f"Relatorio: {title}", f"Autores: {authors or 'Nao informados'}", f"Gerado em: {datetime.now().astimezone().strftime('%d/%m/%Y %H:%M')}", f"Arquivo de origem: {source_name}", f"Aba: {table.source_sheet}", f"Fonte informada: {source or 'Nao informada'}", f"Indicador: {table.title}", f"Unidade informada: {unit or 'Nao informada'}", f"Periodo informado: {period or 'Nao informado'}", f"Cabecalho: linha {table.header_row}; identificacao: coluna {table.label_column}; valor: coluna {table.value_column}."]
+    method.text(0.08, 0.82, "\n".join(textwrap.fill(line, 100) for line in lines), fontsize=10, va="top", linespacing=1.6)
+    method.text(0.08, 0.36, textwrap.fill("As barras representam os valores originais por regional. O valor do estado, quando presente, aparece apenas como referencia e nao foi somado as regionais. A planilha nao informa automaticamente unidade nem periodo; campos nao preenchidos permanecem nao informados. Taxas nao foram convertidas em pizza porque nao sao parcelas de um total.", 100), fontsize=10, va="top", linespacing=1.5)
+    method.text(0.08, 0.025, "Gerador de Relatorios SC | Processamento no servidor, sem armazenamento permanente.", fontsize=9, color="#52606D")
+    output_pdf.parent.mkdir(parents=True, exist_ok=True)
+    with PdfPages(output_pdf) as pdf:
+        pdf.infodict().update({"Title": title, "Author": authors, "Creator": "Gerador de Relatorios SC"})
+        pdf.savefig(fig, facecolor="white")
+        pdf.savefig(method, facecolor="white")
+    plt.close(fig)
+    plt.close(method)
