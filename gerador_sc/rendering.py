@@ -226,10 +226,10 @@ def _polygons(geometry):
     return [geometry] if geometry.geom_type == "Polygon" else list(geometry.geoms)
 
 
-def _draw_map(axis, geometries: dict[str, object], values: dict[str, float | None], identify: bool = True) -> None:
+def _draw_map(axis, geometries: dict[str, object], values: dict[str, float | None], identify: bool = True, color_for_value: Callable[[float], object] | None = None) -> None:
     for number, code in enumerate(MAP_CODES, 1):
-        category = band(values[code])
-        color = "#DDDDDD" if category is None else MAP_COLORS[category]
+        value = values[code]
+        color = "#DDDDDD" if value is None else color_for_value(value) if color_for_value else MAP_COLORS[band(value)]
         for polygon in _polygons(geometries[code]):
             vertices = []
             commands = []
@@ -237,7 +237,7 @@ def _draw_map(axis, geometries: dict[str, object], values: dict[str, float | Non
                 points = list(ring.coords)
                 vertices.extend(points)
                 commands.extend([MplPath.MOVETO] + [MplPath.LINETO] * (len(points) - 2) + [MplPath.CLOSEPOLY])
-            axis.add_patch(PathPatch(MplPath(vertices, commands), facecolor=color, edgecolor="#343A35", linewidth=0.65, hatch="///" if category is None else None))
+            axis.add_patch(PathPatch(MplPath(vertices, commands), facecolor=color, edgecolor="#343A35", linewidth=0.65, hatch="///" if value is None else None))
         if identify:
             center = max(_polygons(geometries[code]), key=lambda polygon: polygon.area).representative_point()
             label = axis.text(center.x, center.y, str(number), ha="center", va="center", weight="bold", fontsize=10, color="#17251C")
@@ -272,15 +272,32 @@ def _map_figure(table: RecognizedTable, config: ReportConfig, year: int, geometr
     fig = plt.figure(figsize=(14, 10))
     fig.text(0.055, 0.95, config.title, fontsize=20, weight="bold", color="#162B40")
     fig.text(0.055, 0.915, f"{_indicator(table, config)} | Santa Catarina | {year}", fontsize=12, color="#52606D")
-    axis = fig.add_axes([0.08, 0.28, 0.84, 0.58])
+    axis = fig.add_axes([0.08, 0.31, 0.84, 0.50])
     map_values = _map_values(table, year)
-    _draw_map(axis, geometries, map_values)
+    color_for_value = None
+    if table.indicator_type != "vacina":
+        observed = [value for serie in table.series for value in _values_for_years(table, config.years, serie) if value is not None]
+        minimum, maximum = min(observed), max(observed)
+        if minimum == maximum:
+            minimum -= 0.5
+            maximum += 0.5
+        normalizer = matplotlib.colors.Normalize(vmin=minimum, vmax=maximum)
+        colormap = plt.colormaps["viridis"]
+        color_for_value = lambda value: colormap(normalizer(value))
+    _draw_map(axis, geometries, map_values, color_for_value=color_for_value)
     axis.set_title("Macrorregioes de saude", loc="left", fontsize=14, weight="bold", pad=13)
-    handles = [Patch(facecolor=color, edgecolor="#555", label=label) for color, label in zip(MAP_COLORS, MAP_BANDS)]
-    handles.append(Patch(facecolor="#DDDDDD", edgecolor="#555", hatch="///", label="Sem dado"))
-    fig.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 0.225), ncol=5, frameon=False, title="Cobertura vacinal (%)")
+    if table.indicator_type == "vacina":
+        handles = [Patch(facecolor=color, edgecolor="#555", label=label) for color, label in zip(MAP_COLORS, MAP_BANDS)]
+        handles.append(Patch(facecolor="#DDDDDD", edgecolor="#555", hatch="///", label="Sem dado"))
+        fig.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 0.23), ncol=5, frameon=False, title="Cobertura vacinal (%)")
+    else:
+        color_axis = fig.add_axes([0.22, 0.265, 0.55, 0.018])
+        colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm=normalizer, cmap=colormap), cax=color_axis, orientation="horizontal")
+        colorbar.set_label(_unit(table, config), fontsize=9)
+        colorbar.ax.tick_params(labelsize=8)
+        fig.legend(handles=[Patch(facecolor="#DDDDDD", edgecolor="#555", hatch="///", label="Sem dado")], loc="lower right", bbox_to_anchor=(0.93, 0.245), frameon=False)
     rows = [[f"{number}. {MAP_NAMES[code]}", "Sem dado" if map_values[code] is None else _format_value(map_values[code], table)] for number, code in enumerate(MAP_CODES, 1)]
-    table_axis = fig.add_axes([0.17, 0.085, 0.66, 0.14])
+    table_axis = fig.add_axes([0.17, 0.075, 0.66, 0.13])
     table_axis.axis("off")
     report_table = table_axis.table(cellText=rows, colLabels=["Macrorregiao de saude", "Valor"], colWidths=[0.72, 0.28], cellLoc="left", bbox=[0, 0, 1, 1])
     report_table.auto_set_font_size(False)
@@ -348,6 +365,8 @@ def _methodology_page(tables: tuple[RecognizedTable, ...], config: ReportConfig,
     notes = ["Abas ou tabelas nao selecionadas permanecem fora do relatorio. Problemas e dados ausentes foram preservados na conferencia."]
     if config.model == "mapa":
         notes.insert(0, "Mapas: limites municipais do IBGE e composicao das macrorregioes publicada pelo Ministerio da Saude. Os valores representam a macrorregiao, nao dados municipais.")
+        if any(table.indicator_type != "vacina" for table in tables):
+            notes.append("Para indicadores diferentes de cobertura vacinal, cores seguem uma escala linear comum a todos os anos selecionados; areas sem valor ficam hachuradas.")
     fig.text(0.08, note_y, "\n".join(textwrap.fill(note, 112) for note in notes), fontsize=9.2, color="#52606D", va="top", linespacing=1.3)
     processing = "Processamento no servidor, sem armazenamento permanente." if config.processing_context == "web" else "Processamento local, sem servidor."
     fig.text(0.08, 0.025, f"Gerador de Relatorios SC | Versao 0.1.0 | {processing}", fontsize=9, color="#52606D")

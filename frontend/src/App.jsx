@@ -25,7 +25,7 @@ const modelLabels = {
   ],
   mapa: [
     "Mapa por macrorregião",
-    "Distribuição da cobertura em SC. Regiões sem valor aparecem em cinza.",
+    "Distribuição do indicador em SC. Regiões sem valor aparecem em cinza.",
   ],
   mapa_regional: [
     "Mapa das Regionais de Saúde",
@@ -692,17 +692,19 @@ export default function App() {
                     <strong>17 Regionais</strong>
                   </div>
                   <div>
-                    <span>Aba</span>
-                    <strong>{inspection.sheet}</strong>
-                  </div>
-                  <div>
                     <span>Indicador</span>
                     <strong>{inspection.indicator}</strong>
                   </div>
                   <div>
+                    <span>Regionais com valor</span>
+                    <strong>{inspection.data_region_count} de 17</strong>
+                  </div>
+                  <div>
                     <span>Valor de SC</span>
                     <strong>
-                      {inspection.state_value.toLocaleString("pt-BR")}
+                      {inspection.state_value == null
+                        ? "Sem dado"
+                        : inspection.state_value.toLocaleString("pt-BR")}
                     </strong>
                   </div>
                 </div>
@@ -719,14 +721,15 @@ export default function App() {
                   {inspection.regions.map((item) => (
                     <div key={item.name}>
                       <span>{item.name}</span>
-                      <strong>{item.value.toLocaleString("pt-BR")}</strong>
+                      <strong>
+                        {item.value == null
+                          ? "Sem dado"
+                          : item.value.toLocaleString("pt-BR")}
+                      </strong>
                     </div>
                   ))}
                 </div>
-                <p className="hint-line">
-                  A planilha não informa o período e a unidade. Você pode
-                  preenchê-los na próxima etapa, se souber.
-                </p>
+                <p className="hint-line">{inspection.notes.join(" ")}</p>
               </>
             )}
             <div className="card-actions">
@@ -809,9 +812,8 @@ export default function App() {
             </div>
             {inspection.kind === "annual" && !selectedCategory && !mapReady && (
               <p className="hint-line">
-                O mapa exige uma tabela de cobertura vacinal com códigos de
-                macrorregiões reais de SC. Regiões ausentes podem aparecer como
-                sem dados.
+                O mapa exige uma tabela com códigos de macrorregiões reais de
+                SC. Regiões ausentes podem aparecer como sem dados.
               </p>
             )}
             {inspection.kind === "annual" && model === "mapa" && mapReady && (

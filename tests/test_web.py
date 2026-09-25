@@ -185,7 +185,7 @@ def test_mismatched_model_is_rejected() -> None:
     assert response.status_code == 422
 
 
-def test_regional_csv_is_recognized_and_missing_region_is_explained() -> None:
+def test_regional_csv_accepts_partial_data_and_marks_missing_regions() -> None:
     web = client()
     regions, state, _, _ = read_values(REGIONAL)
     rows = [
@@ -198,12 +198,58 @@ def test_regional_csv_is_recognized_and_missing_region_is_explained() -> None:
     assert recognized.status_code == 200
     assert recognized.json()["kind"] == "regional"
     assert len(recognized.json()["regions"]) == 17
-    missing = web.post(
+    partial_data = (ROOT / "tests" / "fixtures" / "regionais_sc_parcial_FICTICIA.csv").read_bytes()
+    partial = web.post(
         "/api/inspect",
-        files={"file": ("regionais.csv", "\n".join(rows[:2] + rows[-1:]).encode())},
+        files={"file": ("regionais.csv", partial_data)},
     )
-    assert missing.status_code == 422
-    assert "Faltam Regionais" in missing.json()["detail"]
+    assert partial.status_code == 200, partial.text
+    data = partial.json()
+    assert data["data_region_count"] == 2
+    assert data["missing_region_count"] == 15
+    assert data["state_value"] is None
+    assert data["regions"][0]["value"] == 0
+    assert data["regions"][1]["value"] == 30
+    assert any(item["in_file"] and item["value"] is None for item in data["regions"])
+    assert any(not item["in_file"] and item["value"] is None for item in data["regions"])
+
+    options = {"kind": "regional", "title": "Mapa parcial", "unit": "taxa", "format": "pdf"}
+    pdf = web.post("/api/generate", files={"file": ("regionais.csv", partial_data)}, data={"options": json.dumps(options)})
+    assert pdf.status_code == 200, pdf.text
+    page = PdfReader(io.BytesIO(pdf.content)).pages[0].extract_text()
+    assert "Sem dado" in page
+    assert "zero é preservado" in page
+    options["format"] = "png"
+    png = web.post("/api/generate", files={"file": ("regionais.csv", partial_data)}, data={"options": json.dumps(options)})
+    assert png.status_code == 200, png.text
+    assert png.content.startswith(b"\x89PNG")
+
+    for bad_data, detail in [
+        ("Regionais;Taxa\nNOME DESCONHECIDO;1", "sem correspondencia geografica"),
+        ("Regionais;Taxa\nEXTREMO OESTE;", "Nenhuma Regional"),
+    ]:
+        response = web.post("/api/inspect", files={"file": ("regionais.csv", bad_data.encode())})
+        assert response.status_code == 422
+        assert detail in response.json()["detail"]
+
+
+def test_generic_macro_map_is_available_through_web() -> None:
+    path = ROOT / "tests" / "fixtures" / "taxa_sc_macrorregioes_FICTICIA.csv"
+    files = {"file": (path.name, path.read_bytes())}
+    web = client()
+    inspected = web.post("/api/inspect", files=files)
+    assert inspected.status_code == 200, inspected.text
+    table = next(item for item in inspected.json()["import"]["tabelas"] if item["valida"])
+    assert table["mapa_disponivel"]
+    assert table["tipo_indicador"] == "desconhecido"
+
+    options = {"kind": "annual", "title": "Taxa por macrorregião", "table_ids": [table["id"]], "years": [2020, 2021], "model": "mapa", "confirmed_exclusions": []}
+    pdf = web.post("/api/generate", files=files, data={"options": json.dumps(options)})
+    assert pdf.status_code == 200, pdf.text
+    pages = PdfReader(io.BytesIO(pdf.content)).pages
+    assert len(pages) == 3
+    assert "Sem dado" in pages[0].extract_text()
+    assert "escala linear comum" in pages[-1].extract_text()
 
 
 def test_invalid_spreadsheets_have_readable_errors() -> None:

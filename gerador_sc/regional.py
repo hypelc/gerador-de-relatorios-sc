@@ -18,7 +18,7 @@ import matplotlib.patheffects as effects
 import matplotlib.pyplot as plt
 import openpyxl
 from matplotlib.cm import ScalarMappable
-from matplotlib.patches import PathPatch
+from matplotlib.patches import Patch, PathPatch
 from matplotlib.path import Path as MplPath
 from pyproj import Transformer
 from shapely.geometry import shape
@@ -94,7 +94,7 @@ def _rows(path: Path) -> tuple[str, list[tuple[object, ...]]]:
 
 def read_values(
     path: str | Path,
-) -> tuple[dict[str, tuple[str, float]], float, str, str]:
+) -> tuple[dict[str, tuple[str, float | None]], float | None, str, str]:
     source = Path(path)
     sheet_name, rows = _rows(source)
     if (
@@ -106,8 +106,9 @@ def read_values(
     indicator = str(rows[0][1] or "").strip()
     if not indicator:
         raise ValueError("A segunda coluna precisa informar o nome do indicador.")
-    values: dict[str, tuple[str, float]] = {}
+    values: dict[str, tuple[str, float | None]] = {}
     state_value: float | None = None
+    state_seen = False
     for row_number, row in enumerate(rows[1:], 2):
         regional = row[0] if row else None
         rate = row[1] if len(row) > 1 else None
@@ -119,12 +120,15 @@ def read_values(
                 f"Falta o nome da regional na linha {row_number} da aba {sheet_name}."
             )
         name = normalize_name(display_name)
-        number = _number(
-            rate, f"{display_name}, linha {row_number} da aba {sheet_name}"
+        number = (
+            None
+            if rate is None or (isinstance(rate, str) and not rate.strip())
+            else _number(rate, f"{display_name}, linha {row_number} da aba {sheet_name}")
         )
         if name == "SANTA CATARINA":
-            if state_value is not None:
+            if state_seen:
                 raise ValueError("A linha Santa Catarina aparece mais de uma vez.")
+            state_seen = True
             state_value = number
         else:
             if name in values:
@@ -132,17 +136,16 @@ def read_values(
                     f"Regional repetida: {display_name}, linha {row_number}."
                 )
             values[name] = (display_name, number)
-    if state_value is None:
-        raise ValueError("O valor de Santa Catarina nao foi encontrado.")
     metadata, _ = read_region_mapping()
     expected = {item["normalized_name"] for item in metadata.values()}
-    missing = expected - set(values)
     extra = set(values) - expected
-    if missing:
-        raise ValueError(f"Faltam Regionais de Saude: {', '.join(sorted(missing))}.")
     if extra:
         raise ValueError(
             f"Regionais sem correspondencia geografica: {', '.join(sorted(extra))}."
+        )
+    if not any(value is not None for _, value in values.values()):
+        raise ValueError(
+            "Nenhuma Regional de Saude possui valor numerico; informe pelo menos uma Regional para gerar o mapa."
         )
     return values, state_value, indicator, sheet_name
 
@@ -225,8 +228,8 @@ def geometry_patch(geometry, **kwargs) -> PathPatch:
 def draw_figure(
     metadata: dict[str, dict[str, str]],
     geometries: dict[str, object],
-    values_by_name: dict[str, tuple[str, float]],
-    state_value: float,
+    values_by_name: dict[str, tuple[str, float | None]],
+    state_value: float | None,
     indicator: str,
     config: RegionalConfig,
     source_name: str,
@@ -236,14 +239,13 @@ def draw_figure(
     records = []
     for number, code in enumerate(sorted(metadata), 1):
         normalized_name = metadata[code]["normalized_name"]
-        if normalized_name not in values_by_name:
-            raise ValueError(f"Taxa ausente para a regional {metadata[code]['name']}.")
+        source_record = values_by_name.get(normalized_name)
         records.append(
             {
                 "number": number,
                 "code": code,
-                "name": values_by_name[normalized_name][0],
-                "value": values_by_name[normalized_name][1],
+                "name": metadata[code]["name"],
+                "value": source_record[1] if source_record else None,
                 "geometry": geometries[code],
             }
         )
@@ -263,8 +265,11 @@ def draw_figure(
             "axes.spines.right": False,
         }
     )
-    minimum = min(state_value, *(record["value"] for record in records))
-    maximum = max(state_value, *(record["value"] for record in records))
+    observed = [record["value"] for record in records if record["value"] is not None]
+    if state_value is not None:
+        observed.append(state_value)
+    minimum = min(observed)
+    maximum = max(observed)
     if minimum == maximum:
         minimum -= 0.5
         maximum += 0.5
@@ -295,7 +300,8 @@ def draw_figure(
 
     map_axis = figure.add_axes([0.035, 0.20, 0.595, 0.66])
     for record in records:
-        color = colormap(normalizer(record["value"]))
+        missing_value = record["value"] is None
+        color = "#E5E7EB" if missing_value else colormap(normalizer(record["value"]))
         map_axis.add_patch(
             geometry_patch(
                 record["geometry"],
@@ -303,6 +309,7 @@ def draw_figure(
                 edgecolor="#F6F8FA",
                 linewidth=1.1,
                 joinstyle="round",
+                hatch="///" if missing_value else None,
             )
         )
     state_geometry = unary_union([record["geometry"] for record in records])
@@ -404,7 +411,11 @@ def draw_figure(
         transform=table_axis.transAxes,
     )
     rows = [
-        [str(record["number"]), record["name"], format_rate(record["value"])]
+        [
+            str(record["number"]),
+            record["name"],
+            "Sem dado" if record["value"] is None else format_rate(record["value"]),
+        ]
         for record in records
     ]
     table = table_axis.table(
@@ -448,7 +459,7 @@ def draw_figure(
     table_axis.text(
         0.965,
         0.062,
-        format_rate(state_value),
+        "Sem dado" if state_value is None else format_rate(state_value),
         fontsize=12,
         weight="bold",
         color="#172A3A",
@@ -471,19 +482,28 @@ def draw_figure(
     )
     colorbar.ax.tick_params(labelsize=8, colors="#394B59", length=3)
     colorbar.outline.set_edgecolor("#71808A")
-    color_axis.axvline(state_value, color="white", lw=3, zorder=4)
-    color_axis.axvline(state_value, color="#172A3A", lw=1.1, zorder=5)
-    color_axis.text(
-        state_value,
-        1.65,
-        f"SC {format_rate(state_value)}",
-        transform=color_axis.get_xaxis_transform(),
-        ha="center",
-        va="bottom",
-        fontsize=8,
-        weight="bold",
-        color="#172A3A",
-    )
+    if state_value is not None:
+        color_axis.axvline(state_value, color="white", lw=3, zorder=4)
+        color_axis.axvline(state_value, color="#172A3A", lw=1.1, zorder=5)
+        color_axis.text(
+            state_value,
+            1.65,
+            f"SC {format_rate(state_value)}",
+            transform=color_axis.get_xaxis_transform(),
+            ha="center",
+            va="bottom",
+            fontsize=8,
+            weight="bold",
+            color="#172A3A",
+        )
+    if any(record["value"] is None for record in records):
+        figure.legend(
+            handles=[Patch(facecolor="#E5E7EB", edgecolor="#68737D", hatch="///", label="Sem dado")],
+            loc="lower center",
+            bbox_to_anchor=(0.62, 0.105),
+            frameon=False,
+            fontsize=8,
+        )
 
     details = (
         f"Arquivo: {source_name}. Fonte: {config.source.strip() or 'não informada'}. "
@@ -493,7 +513,8 @@ def draw_figure(
         f"Período: {config.period.strip() or 'não informado'}."
     )
     method = (
-        "Método: valores associados às 17 Regionais de Saúde sem estimativa municipal. "
+        "Método: valores associados às Regionais de Saúde informadas, sem estimativa municipal. "
+        "Regionais ausentes ou com célula vazia são mostradas como Sem dado; zero é preservado. "
         "Geografia: municípios do IBGE agrupados pela composição de Regiões de Saúde do Ministério da Saúde; "
         "projeção EPSG:5880. Gerador de Relatórios SC v0.1.0 "
         f"({config.processing_context})."

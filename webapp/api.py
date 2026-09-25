@@ -26,6 +26,7 @@ from gerador_sc.rendering import render_categorical_report
 from gerador_sc.regional import (
     RegionalConfig,
     normalize_name,
+    read_region_mapping,
     read_values,
     render_regional_report,
 )
@@ -124,6 +125,23 @@ def _is_regional(path: Path) -> bool:
 def _inspect(path: Path) -> dict[str, object]:
     if _is_regional(path):
         values, state_value, indicator, sheet = read_values(path)
+        metadata, _ = read_region_mapping()
+        regions = [
+            {
+                "name": item["name"],
+                "value": values[item["normalized_name"]][1] if item["normalized_name"] in values else None,
+                "in_file": item["normalized_name"] in values,
+            }
+            for _, item in sorted(metadata.items())
+        ]
+        data_count = sum(region["value"] is not None for region in regions)
+        missing_count = len(regions) - data_count
+        missing_note = (
+            f"{missing_count} {'Regional' if missing_count == 1 else 'Regionais'} sem valor "
+            "serão mostradas em cinza; nenhum valor será estimado."
+            if missing_count
+            else "Todas as 17 Regionais possuem valor informado."
+        )
         suggested_title = (
             "Distribuição da taxa de profissionais segundo Regionais de Saúde"
             if normalize_name(indicator) == "TAXA DE PROFISSIONAIS"
@@ -134,14 +152,15 @@ def _inspect(path: Path) -> dict[str, object]:
             "filename": path.name,
             "sheet": sheet,
             "indicator": indicator,
-            "regions": [
-                {"name": label, "value": value} for label, value in values.values()
-            ],
+            "regions": regions,
+            "data_region_count": data_count,
+            "missing_region_count": missing_count,
             "state_value": state_value,
             "models": ["mapa_regional"],
             "suggested_title": suggested_title,
             "notes": [
-                "A planilha não informa automaticamente unidade nem período. Confira esses campos antes de gerar."
+                "A planilha não informa automaticamente unidade nem período. Confira esses campos antes de gerar.",
+                missing_note,
             ],
         }
     result = ReportService().inspect(path)

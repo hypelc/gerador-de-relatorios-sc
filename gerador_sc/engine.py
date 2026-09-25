@@ -90,9 +90,9 @@ def validate_report(result: ImportResult, config: ReportConfig) -> tuple[Diagnos
                     diagnostics.append(Diagnostic("error", "PIE_INVALID_VALUES", "Pizza exige pelo menos duas contagens nao negativas, sem lacunas, com total positivo.", table.source_sheet))
     if config.model == "mapa":
         if len(selected) != 1:
-            diagnostics.append(Diagnostic("error", "MAP_REQUIRES_ONE_TABLE", "O mapa usa uma tabela por vez.", "Montar relatorio", "Selecione uma tabela de cobertura vacinal."))
+            diagnostics.append(Diagnostic("error", "MAP_REQUIRES_ONE_TABLE", "O mapa usa uma tabela por vez.", "Montar relatorio", "Selecione uma tabela com macrorregioes de SC."))
         elif not selected[0].map_ready:
-            diagnostics.append(Diagnostic("error", "MAP_CONTRACT_NOT_MET", "O mapa exige cobertura vacinal e codigos unicos de macrorregioes de saude de Santa Catarina.", selected[0].source_sheet, "Use somente os codigos 4210, 4211, 4213, 4214, 4215, 4216, 4217 e 4218; regioes nao presentes serao marcadas como sem dados."))
+            diagnostics.append(Diagnostic("error", "MAP_CONTRACT_NOT_MET", "O mapa exige codigos unicos de macrorregioes de saude de Santa Catarina.", selected[0].source_sheet, "Use somente os codigos 4210, 4211, 4213, 4214, 4215, 4216, 4217 e 4218; regioes nao presentes serao marcadas como sem dados."))
         else:
             for year in config.years:
                 if year in selected[0].years:

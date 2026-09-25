@@ -586,7 +586,7 @@ class MainWindow(QMainWindow):
         elif len(tables) == 1 and not tables[0].valid:
             self.map_help.setText("Mapa desabilitado: corrija os problemas da tabela antes de usa-la.")
         else:
-            self.map_help.setText("Mapa desabilitado: selecione uma tabela valida de cobertura com codigos reais de macrorregioes de SC. Regioes ausentes aparecem sem dados.")
+            self.map_help.setText("Mapa desabilitado: selecione uma tabela valida com codigos reais de macrorregioes de SC. Regioes ausentes aparecem sem dados.")
         if not map_available and self.map_radio.isChecked():
             self.panel_radio.setChecked(True)
 

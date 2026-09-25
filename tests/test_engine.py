@@ -269,12 +269,23 @@ def test_partial_map_marks_absent_regions_and_rejects_empty_year(tmp_path: Path,
         service.cleanup(artifact)
 
 
-def test_abandonment_rate_with_sc_codes_does_not_use_coverage_map(tmp_path: Path) -> None:
+def test_abandonment_rate_uses_generic_map_scale(tmp_path: Path) -> None:
     path = _write_csv(tmp_path / "taxa_de_abandono_da_vacina.csv", "Macrorregiao;2020;2021;2022\n4210 SUL;12;10;9\n4211 NORTE;20;18;17\n")
-    table = ReportService().inspect(path).valid_tables[0]
+    service = ReportService()
+    result = service.inspect(path)
+    table = result.valid_tables[0]
     assert table.indicator_type == "desconhecido"
     assert table.unit == "Taxa informada na planilha"
-    assert not table.map_ready
+    assert table.map_ready
+    artifact = service.preview(result, ReportConfig((table.table_id,), "mapa", (2020, 2021, 2022), "Abandono"))
+    try:
+        pages = PdfReader(str(artifact.pdf_path)).pages
+        assert len(pages) == 4
+        assert "Unidades utilizadas:" in pages[-1].extract_text()
+        assert "Cobertura vacinal (%)" not in pages[0].extract_text()
+        assert "escala linear comum" in pages[-1].extract_text()
+    finally:
+        service.cleanup(artifact)
 
 
 def test_export_cancellation_does_not_publish_or_leave_temporary_file(tmp_path: Path) -> None:

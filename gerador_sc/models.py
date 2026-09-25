@@ -80,8 +80,6 @@ class RecognizedTable:
         codes = [serie.code for serie in self.series]
         return (
             self.valid
-            and
-            self.indicator_type == "vacina"
             and bool(codes)
             and len(set(codes)) == len(codes)
             and set(codes) <= SC_MACRO_CODES
