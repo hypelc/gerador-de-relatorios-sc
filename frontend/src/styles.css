@@ -11,7 +11,6 @@
 }
 body {
   margin: 0;
-  min-width: 320px;
 }
 button,
 input {
@@ -173,26 +172,6 @@ input:focus-visible {
 }
 .page-intro h1 {
   margin: 14px 0 10px;
-}
-.page-intro p {
-  font-size: 1.1rem;
-  margin: 0;
-}
-.intro-aside {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  color: #49787a;
-  padding-bottom: 5px;
-  font-size: 0.85rem;
-  line-height: 1.25;
-}
-.aside-number {
-  font:
-    800 2.8rem/1 Manrope,
-    sans-serif;
-  color: #21837b;
-  letter-spacing: -0.07em;
 }
 .stepper {
   display: flex;
@@ -592,7 +571,7 @@ input:focus-visible {
   box-shadow: inset 0 0 0 1px #168078;
 }
 .model-card:disabled {
-  opacity: 0.46;
+  opacity: 0.7;
 }
 .model-visual {
   display: flex;
@@ -686,13 +665,15 @@ input:focus-visible {
   height: 23px;
   width: 23px;
   border-radius: 50%;
-  background: #caddd8;
+  background: #fff;
+  border: 1px solid #9bb9b2;
   color: #fff;
   display: grid;
   place-items: center;
 }
 .model-card.selected .model-check {
   background: #1b8179;
+  border-color: #1b8179;
 }
 .field-section {
   border-top: 1px solid #e7efed;
@@ -714,6 +695,19 @@ input:focus-visible {
   color: #587a7b;
   border-radius: 6px;
   cursor: pointer;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+}
+.year-chips label:focus-within {
+  outline: 3px solid #168179;
+  outline-offset: 2px;
+}
+.year-chips label.disabled {
+  background: #f4f7f6;
+  border-color: #d8e2df;
+  color: #667d7c;
+  cursor: not-allowed;
 }
 .year-chips label.checked {
   background: #e3f2ec;
@@ -724,6 +718,13 @@ input:focus-visible {
   position: absolute;
   opacity: 0;
   pointer-events: none;
+}
+.section-heading h2:focus {
+  display: table;
+  max-width: 100%;
+  outline: 3px solid #46a6a1;
+  outline-offset: 5px;
+  border-radius: 4px;
 }
 .form-grid {
   display: grid;
@@ -831,9 +832,6 @@ input:focus-visible {
   .page-intro {
     margin-bottom: 25px;
   }
-  .intro-aside {
-    display: none;
-  }
   .stepper {
     gap: 0;
     padding: 5px;
@@ -853,6 +851,10 @@ input:focus-visible {
   .work-card {
     padding: 26px 17px 20px;
     border-radius: 13px;
+  }
+  .dropzone {
+    min-height: 245px;
+    padding: 18px;
   }
   .section-heading.with-file {
     flex-direction: column;

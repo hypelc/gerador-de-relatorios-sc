@@ -181,7 +181,7 @@ function ModelCard({ value, selected, disabled, onChoose }) {
         <span>{description}</span>
       </span>
       <span className="model-check">
-        <Icon name="check" size={15} />
+        {selected && <Icon name="check" size={15} />}
       </span>
     </button>
   );
@@ -211,6 +211,9 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef(null);
   const previewRef = useRef(null);
+  const stepperRef = useRef(null);
+  const activeHeadingRef = useRef(null);
+  const previousStepRef = useRef(step);
 
   useEffect(
     () => () => {
@@ -218,6 +221,14 @@ export default function App() {
     },
     [],
   );
+
+  useEffect(() => {
+    if (previousStepRef.current === step) return;
+    previousStepRef.current = step;
+
+    stepperRef.current?.scrollIntoView({ block: "start" });
+    activeHeadingRef.current?.focus({ preventScroll: true });
+  }, [step]);
 
   const tables = inspection?.kind === "annual" ? inspection.import.tabelas : [];
   const categoryTables =
@@ -442,21 +453,14 @@ export default function App() {
           <div>
             <span className="eyebrow">RELATÓRIOS DE SANTA CATARINA</span>
             <h1>Gerar relatório</h1>
-            <p>
-              Um caminho claro entre os números da planilha e a figura final.
-            </p>
-          </div>
-          <div className="intro-aside">
-            <span className="aside-number">05</span>
-            <span>
-              formatos de planilha
-              <br />
-              disponíveis no piloto
-            </span>
           </div>
         </div>
 
-        <nav className="stepper" aria-label="Etapas do relatório">
+        <nav
+          className="stepper"
+          aria-label="Etapas do relatório"
+          ref={stepperRef}
+        >
           {["Importar", "Conferir dados", "Montar", "Prévia"].map(
             (label, index) => (
               <button
@@ -464,6 +468,7 @@ export default function App() {
                 type="button"
                 className={`step ${step === index + 1 ? "active" : ""} ${step > index + 1 ? "complete" : ""}`}
                 disabled={index + 1 > step || (index + 1 > 1 && !inspection)}
+                aria-current={step === index + 1 ? "step" : undefined}
                 onClick={() => {
                   setError(null);
                   setStep(index + 1);
@@ -488,7 +493,9 @@ export default function App() {
           <section className="work-card import-layout">
             <div className="section-heading">
               <span className="eyebrow">ETAPA 01 · IMPORTAR</span>
-              <h2>Escolha a planilha</h2>
+              <h2 ref={activeHeadingRef} tabIndex={-1}>
+                Escolha a planilha
+              </h2>
               <p>
                 Use um arquivo Excel (.xlsx) ou CSV com os indicadores que
                 deseja visualizar.
@@ -549,7 +556,9 @@ export default function App() {
             <div className="section-heading with-file">
               <div>
                 <span className="eyebrow">ETAPA 02 · CONFERIR DADOS</span>
-                <h2>Confira o que encontramos</h2>
+                <h2 ref={activeHeadingRef} tabIndex={-1}>
+                  Confira o que encontramos
+                </h2>
                 <p>A geração usa somente o que você confirmar nesta etapa.</p>
               </div>
               <div className="file-pill">
@@ -765,7 +774,9 @@ export default function App() {
           <section className="work-card">
             <div className="section-heading">
               <span className="eyebrow">ETAPA 03 · MONTAR</span>
-              <h2>Como você quer mostrar os dados?</h2>
+              <h2 ref={activeHeadingRef} tabIndex={-1}>
+                Como você quer mostrar os dados?
+              </h2>
               <p>
                 Os modelos disponíveis dependem do formato reconhecido na
                 planilha.
@@ -846,11 +857,16 @@ export default function App() {
                   {commonYears.map((year) => (
                     <label
                       key={year}
-                      className={years.includes(year) ? "checked" : ""}
+                      className={`${years.includes(year) ? "checked" : ""} ${model === "mapa" && !mapYearsWithData.includes(year) ? "disabled" : ""}`}
                     >
                       <input
                         disabled={
                           model === "mapa" && !mapYearsWithData.includes(year)
+                        }
+                        aria-describedby={
+                          model === "mapa" && !mapYearsWithData.includes(year)
+                            ? "map-year-note"
+                            : undefined
                         }
                         type={
                           ["barras", "pizza"].includes(model)
@@ -878,6 +894,18 @@ export default function App() {
                     </label>
                   ))}
                 </div>
+                {model === "mapa" &&
+                  commonYears.some(
+                    (year) => !mapYearsWithData.includes(year),
+                  ) && (
+                    <p className="hint-line" id="map-year-note">
+                      Sem valores numéricos disponíveis para o mapa em{" "}
+                      {commonYears
+                        .filter((year) => !mapYearsWithData.includes(year))
+                        .join(", ")}
+                      .
+                    </p>
+                  )}
               </div>
             )}
             <div className="field-section">
@@ -1003,7 +1031,9 @@ export default function App() {
           <section className="work-card">
             <div className="section-heading">
               <span className="eyebrow">ETAPA 04 · PRÉVIA</span>
-              <h2>Revise o resultado</h2>
+              <h2 ref={activeHeadingRef} tabIndex={-1}>
+                Revise o resultado
+              </h2>
               <p>
                 Confira o título, as regiões e a legenda antes de compartilhar.
               </p>
