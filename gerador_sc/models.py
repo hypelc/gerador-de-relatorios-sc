@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-
 Severity = Literal["info", "warning", "error"]
 IndicatorType = Literal["vacina", "nascidos", "mortalidade", "contagem", "desconhecido"]
 SC_MACRO_CODES = frozenset({"4210", "4211", "4213", "4214", "4215", "4216", "4217", "4218"})

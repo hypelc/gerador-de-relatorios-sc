@@ -5,23 +5,29 @@ from __future__ import annotations
 import math
 import re
 import textwrap
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
 
 import matplotlib
 
 matplotlib.use("Agg")
+import matplotlib.patheffects as effects
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.patches import Patch, PathPatch
 from matplotlib.path import Path as MplPath
-import matplotlib.patheffects as effects
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 
-from .geography import MAP_BANDS, MAP_CODES, MAP_COLORS, MAP_NAMES, band, load_projected_geometries
+from .geography import (
+    MAP_BANDS,
+    MAP_CODES,
+    MAP_COLORS,
+    MAP_NAMES,
+    band,
+    load_projected_geometries,
+)
 from .models import CategoricalTable, RecognizedTable, ReportConfig, Series
-
 
 PALETTES = {
     "Acessivel": ("#0072B2", "#D55E00", "#009E73", "#CC79A7", "#8C6D00", "#56B4E9", "#332288", "#555555", "#AA4499"),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import threading
 from pathlib import Path
 
@@ -14,8 +15,8 @@ except ImportError:  # compatibilidade durante a primeira etapa red do teste
 
     class OperationCancelled(RuntimeError):
         pass
+from gerador_sc.importers import inspect_file
 from gerador_sc.models import ReportConfig, ReportValidationError
-
 
 ROOT = Path(__file__).resolve().parents[1]
 REFERENCE = ROOT / "data" / "exemplos" / "BANCO DE DADOS CV - AMANDA E EMILENE.xlsx"
@@ -58,6 +59,32 @@ def test_csv_preserves_blank_and_zero(tmp_path: Path) -> None:
     assert table.valid
     assert table.years == (2020, 2021, 2022)
     assert table.series[0].values == (0.0, None, 2.5)
+
+
+def test_import_hash_streaming_preserves_hash_and_table_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _write_xlsx(
+        tmp_path / "dados.xlsx",
+        [
+            ["Cobertura BCG por Ano"],
+            ["Regional", 2020, 2021, 2022],
+            ["Norte", 0, 2, 3],
+        ],
+    )
+    expected_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    baseline = inspect_file(path)
+
+    def unexpected_whole_file_read(self: Path) -> bytes:
+        pytest.fail("A leitura do hash não deve materializar todos os bytes.")
+
+    monkeypatch.setattr(Path, "read_bytes", unexpected_whole_file_read)
+    streamed = inspect_file(path)
+
+    assert streamed.source_sha256 == expected_hash
+    assert [table.table_id for table in streamed.tables] == [
+        table.table_id for table in baseline.tables
+    ]
 
 
 def test_invalid_value_is_exposed_and_blocks_report(tmp_path: Path) -> None:

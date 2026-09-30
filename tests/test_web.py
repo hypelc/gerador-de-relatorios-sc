@@ -1,22 +1,26 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
 
-import pytest
 import openpyxl
+import pytest
 from fastapi.testclient import TestClient
 from pypdf import PdfReader
 
-from gerador_sc.regional import read_values
+from gerador_sc import regional as regional_module
 from gerador_sc.importers import inspect_file
+from gerador_sc.regional import RegionalConfig, read_values
 from webapp import api as api_module
 from webapp.api import create_app
 
 ROOT = Path(__file__).resolve().parents[1]
 ANNUAL = ROOT / "data" / "exemplos" / "BANCO DE DADOS CV - AMANDA E EMILENE.xlsx"
 REGIONAL = ROOT / "data" / "exemplos" / "taxa estado SC.xlsx"
+REGIONAL_FIXTURE = ROOT / "tests" / "fixtures" / "regionais_sc_parcial_FICTICIA.csv"
 
 
 @pytest.fixture(autouse=True)
@@ -28,12 +32,262 @@ def client() -> TestClient:
     return TestClient(create_app())
 
 
+def invoke_asgi_without_content_length(app, body: bytes) -> list[dict[str, object]]:
+    async def run_request() -> list[dict[str, object]]:
+        sent: list[dict[str, object]] = []
+        cursor = 0
+        chunk_size = 512 * 1024
+
+        async def receive() -> dict[str, object]:
+            nonlocal cursor
+            if cursor < len(body):
+                chunk = body[cursor : cursor + chunk_size]
+                cursor += len(chunk)
+                return {
+                    "type": "http.request",
+                    "body": chunk,
+                    "more_body": cursor < len(body),
+                }
+            return {"type": "http.disconnect"}
+
+        async def send(message: dict[str, object]) -> None:
+            sent.append(message)
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/api/inspect",
+            "raw_path": b"/api/inspect",
+            "query_string": b"",
+            "headers": [(b"content-type", b"multipart/form-data; boundary=x")],
+            "client": ("testclient", 50000),
+            "server": ("testserver", 80),
+            "state": {},
+        }
+        await app(scope, receive, send)
+        return sent
+
+    return asyncio.run(run_request())
+
+
 def test_public_api_accepts_upload_without_session() -> None:
     web = client()
     response = web.post("/api/inspect", files={"file": ("dados.csv", b"a;b\n1;2")})
     assert response.status_code == 422
     assert response.json()["detail"]["message"] == "Nenhuma tabela válida foi encontrada."
     assert web.get("/api/session").status_code == 404
+
+
+def test_request_body_limit_rejects_large_content_length_before_multipart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_temporary_directory(*args, **kwargs):
+        raise AssertionError("A solicitação excedente não deve criar temporários.")
+
+    monkeypatch.setattr(
+        api_module.tempfile, "TemporaryDirectory", unexpected_temporary_directory
+    )
+    oversized = b"x" * (api_module.MAX_REQUEST_BODY_BYTES + 1)
+    response = client().post(
+        "/api/inspect",
+        content=oversized,
+        headers={"Content-Type": "multipart/form-data; boundary=x"},
+    )
+
+    assert response.status_code == 413
+    assert "corpo" in response.json()["detail"].lower()
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_request_body_limit_counts_streamed_bytes_without_content_length(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_temporary_directory(*args, **kwargs):
+        raise AssertionError("A solicitação excedente não deve criar temporários.")
+
+    monkeypatch.setattr(
+        api_module.tempfile, "TemporaryDirectory", unexpected_temporary_directory
+    )
+    app = create_app()
+    body = b"x" * (api_module.MAX_REQUEST_BODY_BYTES + 1)
+    sent = invoke_asgi_without_content_length(app, body)
+    start = next(message for message in sent if message["type"] == "http.response.start")
+    response_body = b"".join(
+        message.get("body", b"")
+        for message in sent
+        if message["type"] == "http.response.body"
+    )
+
+    assert start["status"] == 413
+    assert b"corpo" in response_body.lower()
+
+
+def test_file_limit_stays_separate_and_temporary_upload_is_removed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_temporary_directory = api_module.tempfile.TemporaryDirectory
+    temporary_paths: list[Path] = []
+
+    class TrackedTemporaryDirectory:
+        def __init__(self, *args, **kwargs):
+            self.directory = original_temporary_directory(*args, **kwargs)
+
+        def __enter__(self):
+            path = Path(self.directory.__enter__())
+            temporary_paths.append(path)
+            return path
+
+        def __exit__(self, *args):
+            return self.directory.__exit__(*args)
+
+    monkeypatch.setattr(
+        api_module.tempfile, "TemporaryDirectory", TrackedTemporaryDirectory
+    )
+    oversized_file = b"x" * (api_module.MAX_UPLOAD_BYTES + 1)
+    response = client().post(
+        "/api/inspect",
+        files={"file": ("grande.csv", oversized_file, "text/csv")},
+    )
+
+    assert response.status_code == 413
+    assert "planilha" in response.json()["detail"].lower()
+    assert temporary_paths
+    assert all(not path.exists() for path in temporary_paths)
+
+
+def test_expanded_xlsx_limit_stays_separate_and_temporary_is_removed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_temporary_directory = api_module.tempfile.TemporaryDirectory
+    temporary_paths: list[Path] = []
+
+    class TrackedTemporaryDirectory:
+        def __init__(self, *args, **kwargs):
+            self.directory = original_temporary_directory(*args, **kwargs)
+
+        def __enter__(self):
+            path = Path(self.directory.__enter__())
+            temporary_paths.append(path)
+            return path
+
+        def __exit__(self, *args):
+            return self.directory.__exit__(*args)
+
+    monkeypatch.setattr(
+        api_module.tempfile, "TemporaryDirectory", TrackedTemporaryDirectory
+    )
+    workbook = io.BytesIO()
+    with ZipFile(workbook, "w", ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", b"<Types/>")
+        archive.writestr("xl/workbook.xml", b"<workbook/>")
+        archive.writestr(
+            "xl/worksheets/sheet1.xml",
+            b"0" * (api_module.MAX_UNPACKED_BYTES + 1),
+        )
+    payload = workbook.getvalue()
+    assert len(payload) < api_module.MAX_REQUEST_BODY_BYTES
+
+    response = client().post(
+        "/api/inspect",
+        files={"file": ("expandida.xlsx", payload)},
+    )
+
+    assert response.status_code == 413
+    assert "expandida" in response.json()["detail"].lower()
+    assert temporary_paths
+    assert all(not path.exists() for path in temporary_paths)
+
+
+def test_regional_api_requests_only_the_selected_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested_formats: list[str] = []
+
+    def fake_render(source, pdf_path, png_path, config, *, output_format):
+        requested_formats.append(output_format)
+        if output_format == "pdf":
+            pdf_path.write_bytes(b"PDF ficticio")
+        elif output_format == "png":
+            png_path.write_bytes(b"\x89PNG ficticio")
+
+    monkeypatch.setattr(api_module, "render_regional_report", fake_render)
+    web = client()
+
+    for output_format, expected_type, expected_content in (
+        ("pdf", "application/pdf", b"PDF ficticio"),
+        ("png", "image/png", b"\x89PNG ficticio"),
+    ):
+        options = {
+            "kind": "regional",
+            "title": "Mapa fictício",
+            "format": output_format,
+        }
+        response = web.post(
+            "/api/generate",
+            files={"file": (REGIONAL_FIXTURE.name, REGIONAL_FIXTURE.read_bytes())},
+            data={"options": json.dumps(options)},
+        )
+        assert response.status_code == 200, response.text
+        assert response.headers["content-type"].startswith(expected_type)
+        assert response.content == expected_content
+
+    assert requested_formats == ["pdf", "png"]
+
+
+@pytest.mark.parametrize(
+    ("output_format", "expected_paths"),
+    [
+        ("pdf", ("pdf", None)),
+        ("png", (None, "png")),
+        ("both", ("pdf", "png")),
+    ],
+)
+def test_regional_motor_selects_only_requested_outputs_and_default_keeps_both(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    output_format: str,
+    expected_paths: tuple[str | None, str | None],
+) -> None:
+    original_read_mapping = regional_module.read_region_mapping
+    mapping_calls = 0
+    requested_paths: list[tuple[str | None, str | None]] = []
+
+    def tracked_read_mapping():
+        nonlocal mapping_calls
+        mapping_calls += 1
+        return original_read_mapping()
+
+    def record_draw(*args):
+        pdf_path, png_path = args[-2:]
+        requested_paths.append(
+            (
+                pdf_path.suffix[1:] if pdf_path is not None else None,
+                png_path.suffix[1:] if png_path is not None else None,
+            )
+        )
+
+    monkeypatch.setattr(regional_module, "read_region_mapping", tracked_read_mapping)
+    monkeypatch.setattr(regional_module, "build_geometries", lambda municipalities: {})
+    monkeypatch.setattr(regional_module, "draw_figure", record_draw)
+    arguments = (
+        REGIONAL_FIXTURE,
+        tmp_path / "relatorio.pdf",
+        tmp_path / "relatorio.png",
+        RegionalConfig("Relatório fictício"),
+    )
+
+    if output_format == "both":
+        regional_module.render_regional_report(*arguments)
+    else:
+        regional_module.render_regional_report(
+            *arguments, output_format=output_format
+        )
+
+    assert requested_paths == [expected_paths]
+    assert mapping_calls == 1
 
 
 @pytest.mark.parametrize("variation,annual_count", [(1, 3), (2, 3), (3, 1), (4, 3), (5, 1)])

@@ -7,8 +7,9 @@ import hashlib
 import io
 import math
 import re
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Literal
 
 import openpyxl
 
@@ -22,7 +23,6 @@ from .models import (
     SheetSummary,
     SourceSheet,
 )
-
 
 _YEAR_RE = re.compile(r"^(?:19|20)\d{2}$")
 _MAP_CODES = {"4210", "4211", "4213", "4214", "4215", "4216", "4217", "4218"}
@@ -459,6 +459,14 @@ def _parse_categorical(sheet: SourceSheet, source_hash: str) -> list[Categorical
     return tables
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def inspect_file(path: str | Path) -> ImportResult:
     source_path = Path(path).expanduser().resolve()
     if not source_path.exists() or not source_path.is_file():
@@ -467,7 +475,7 @@ def inspect_file(path: str | Path) -> ImportResult:
         raise ValueError("Formato nao suportado. Escolha um arquivo .xlsx ou .csv.")
 
     sheets, file_format, formula_count, diagnostics = _parse_source(source_path)
-    source_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
+    source_hash = _sha256_file(source_path)
     tables: list[RecognizedTable] = []
     categorical_tables: list[CategoricalTable] = []
     summaries: list[SheetSummary] = []
@@ -490,7 +498,7 @@ def inspect_file(path: str | Path) -> ImportResult:
             label_column = _find_label_column(sheet.rows, header_index, first_year_column)
             next_header = header_rows[index + 1] if index + 1 < len(header_rows) else None
             table_id = hashlib.sha1(
-                f"{source_hash}:{sheet.name}:{header_index + 1}:{label_column + 1}".encode("utf-8")
+                f"{source_hash}:{sheet.name}:{header_index + 1}:{label_column + 1}".encode()
             ).hexdigest()[:14]
             table = _parse_table(sheet, header_index, label_column, table_id, next_header_index=next_header)
             tables.append(table)

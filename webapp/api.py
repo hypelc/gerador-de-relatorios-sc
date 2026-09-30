@@ -19,10 +19,10 @@ import openpyxl
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from openpyxl.utils.exceptions import InvalidFileException
 from starlette.concurrency import run_in_threadpool
+from starlette.responses import JSONResponse
 
 from gerador_sc.engine import ReportService
 from gerador_sc.models import ReportConfig, ReportValidationError
-from gerador_sc.rendering import render_categorical_report
 from gerador_sc.regional import (
     RegionalConfig,
     normalize_name,
@@ -30,14 +30,90 @@ from gerador_sc.regional import (
     read_values,
     render_regional_report,
 )
+from gerador_sc.rendering import render_categorical_report
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_REQUEST_BODY_BYTES = MAX_UPLOAD_BYTES + 1024 * 1024
 MAX_UNPACKED_BYTES = 50 * 1024 * 1024
 VERSION = "0.1.0"
 _render_lock = threading.Lock()
 _rate_lock = threading.Lock()
 _rate_events: dict[str, list[float]] = {}
+
+
+class RequestBodyLimitMiddleware:
+    def __init__(self, app, max_body_bytes: int) -> None:
+        self.app = app
+        self.max_body_bytes = max_body_bytes
+
+    async def __call__(self, scope, receive, send) -> None:
+        limited_routes = {"/api/inspect", "/api/generate"}
+        if (
+            scope["type"] != "http"
+            or scope["method"] != "POST"
+            or scope["path"] not in limited_routes
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        content_length = next(
+            (
+                value
+                for name, value in scope.get("headers", ())
+                if name.lower() == b"content-length"
+            ),
+            None,
+        )
+        if content_length is not None:
+            try:
+                announced_size = int(content_length)
+            except ValueError:
+                announced_size = 0
+            if announced_size > self.max_body_bytes:
+                await self._reject(scope, receive, send)
+                return
+
+        with tempfile.SpooledTemporaryFile(
+            max_size=1024 * 1024, mode="w+b"
+        ) as body_stream:
+            received_bytes = 0
+            more_body = True
+            while more_body:
+                message = await receive()
+                if message["type"] == "http.disconnect":
+                    return
+                if message["type"] != "http.request":
+                    continue
+                chunk = message.get("body", b"")
+                received_bytes += len(chunk)
+                if received_bytes > self.max_body_bytes:
+                    await self._reject(scope, receive, send)
+                    return
+                body_stream.write(chunk)
+                more_body = message.get("more_body", False)
+
+            body_stream.seek(0)
+
+            async def replay_receive():
+                chunk = body_stream.read(64 * 1024)
+                if chunk:
+                    return {
+                        "type": "http.request",
+                        "body": chunk,
+                        "more_body": body_stream.tell() < received_bytes,
+                    }
+                return {"type": "http.disconnect"}
+
+            await self.app(scope, replay_receive, send)
+
+    async def _reject(self, scope, receive, send) -> None:
+        limit_mib = self.max_body_bytes // (1024 * 1024)
+        response = JSONResponse(
+            {"detail": f"O corpo da solicitação ultrapassa o limite de {limit_mib} MiB."},
+            status_code=413,
+        )
+        await response(scope, receive, send)
 
 
 def _limit(request: Request, action: str, maximum: int, window_seconds: int) -> None:
@@ -124,8 +200,8 @@ def _is_regional(path: Path) -> bool:
 
 def _inspect(path: Path) -> dict[str, object]:
     if _is_regional(path):
-        values, state_value, indicator, sheet = read_values(path)
         metadata, _ = read_region_mapping()
+        values, state_value, indicator, sheet = read_values(path, metadata=metadata)
         regions = [
             {
                 "name": item["name"],
@@ -223,6 +299,7 @@ def _generate(path: Path, options: dict[str, object]) -> tuple[bytes, str, str]:
                     pdf_path,
                     png_path,
                     RegionalConfig(title, authors, source, unit, period),
+                    output_format=output_format,
                 )
             target = pdf_path if output_format == "pdf" else png_path
             media_type = "application/pdf" if output_format == "pdf" else "image/png"
@@ -307,6 +384,9 @@ def create_app() -> FastAPI:
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+    )
+    app.add_middleware(
+        RequestBodyLimitMiddleware, max_body_bytes=MAX_REQUEST_BODY_BYTES
     )
 
     @app.middleware("http")

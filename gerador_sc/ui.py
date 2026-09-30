@@ -5,8 +5,23 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QRunnable, QSettings, QTimer, Qt, QThreadPool, QUrl, Signal
-from PySide6.QtGui import QAction, QDesktopServices, QDragEnterEvent, QDropEvent, QPixmap
+from PySide6.QtCore import (
+    QObject,
+    QRunnable,
+    QSettings,
+    Qt,
+    QThreadPool,
+    QTimer,
+    QUrl,
+    Signal,
+)
+from PySide6.QtGui import (
+    QAction,
+    QDesktopServices,
+    QDragEnterEvent,
+    QDropEvent,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -38,7 +53,13 @@ from PySide6.QtWidgets import (
 
 from . import APP_NAME, APP_VERSION
 from .engine import OperationCancelled, ReportService, default_export_path
-from .models import Diagnostic, ImportResult, ReportArtifact, ReportConfig, ReportValidationError
+from .models import (
+    Diagnostic,
+    ImportResult,
+    ReportArtifact,
+    ReportConfig,
+    ReportValidationError,
+)
 from .rendering import PALETTES, RenderCancelled
 
 
@@ -791,7 +812,7 @@ class MainWindow(QMainWindow):
                 event.acceptProposedAction()
                 return
 
-    def closeEvent(self, event) -> None:  # noqa: N802 - assinatura Qt
+    def closeEvent(self, event) -> None:
         if self._active_worker:
             self._close_requested = True
             self._active_worker.cancel_event.set()

@@ -1,21 +1,20 @@
 """Mapas de cobertura por macrorregião de SC, com geometrias oficiais em cache."""
 import argparse
 import csv
-from datetime import datetime, timezone
 import hashlib
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
+import matplotlib.patheffects as effects
 import matplotlib.pyplot as plt
+from gerar_graficos import extrair
 from matplotlib.patches import Patch, PathPatch
 from matplotlib.path import Path as MplPath
-import matplotlib.patheffects as effects
 from pyproj import Transformer
-from shapely.geometry import shape, mapping
+from shapely.geometry import mapping, shape
 from shapely.geometry.polygon import orient
 from shapely.ops import transform, unary_union
-
-from gerar_graficos import extrair
 
 ROOT = Path(__file__).resolve().parents[2]
 GEO = ROOT / "geodados"
@@ -209,7 +208,7 @@ def main():
                     categoria = classe(valor)
                     writer.writerow([tabela["aba"], ano, codigo, NOMES[codigo], valor, "Sem dado" if categoria is None else FAIXAS[categoria]])
     arquivos = [args.planilha, GEO / "sc_municipios_ibge.geojson", GEO / "macrorregioes_ms.csv"]
-    manifesto = {"gerado_em": datetime.now(timezone.utc).isoformat(), "fontes": FONTES, "sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in arquivos}, "municipios_por_macro": contagens, "municipios_total": sum(contagens.values()), "projecao": "EPSG:5880", "ano_modelo": args.ano, "limites_classes": [45, 70, 95], "metodo": "União das geometrias municipais pelos códigos de macrorregião do MS. Valores da planilha associados diretamente pelo código de macrorregião. Nenhuma estimativa municipal; nenhum cálculo de abandono. Recorte territorial fixo aplicado às séries anuais."}
+    manifesto = {"gerado_em": datetime.now(UTC).isoformat(), "fontes": FONTES, "sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in arquivos}, "municipios_por_macro": contagens, "municipios_total": sum(contagens.values()), "projecao": "EPSG:5880", "ano_modelo": args.ano, "limites_classes": [45, 70, 95], "metodo": "União das geometrias municipais pelos códigos de macrorregião do MS. Valores da planilha associados diretamente pelo código de macrorregião. Nenhuma estimativa municipal; nenhum cálculo de abandono. Recorte territorial fixo aplicado às séries anuais."}
     (args.saida / "fontes_e_metodo.json").write_text(json.dumps(manifesto, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Mapas gerados em {args.saida.resolve()}. 295 municípios, 8 macrorregiões.")
 
