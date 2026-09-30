@@ -23,6 +23,85 @@ REGIONAL = ROOT / "data" / "exemplos" / "taxa estado SC.xlsx"
 REGIONAL_FIXTURE = ROOT / "tests" / "fixtures" / "regionais_sc_parcial_FICTICIA.csv"
 
 
+def assessment_workbook() -> bytes:
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Avaliações"
+    sheet.append(["Pesquisa sem dados pessoais"])
+    sheet.append(["Questão", "% Erro", "Erros", "Avaliação", "Acertos", "% Acerto"])
+    sheet.append([1, 0.25, 1, "1ª avaliação", 3, 0.75])
+    sheet.append([2, 0.0, 0, "1ª avaliação", 4, 1.0])
+    sheet.append([None, 0.125, 1, "TOTAL 1ª avaliação", 7, 0.875])
+    sheet.append([1, "8,33%%", 1, "2ª avaliação", 11, 0.9167])
+    sheet.append([2, 0.0, 0, "2ª avaliação", 12, 1.0])
+    sheet.append([None, "4,17%", 1, "TOTAL 2ª avaliação", 23, 0.9583])
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def test_assessment_inspection_and_pdf_keep_evaluations_separate() -> None:
+    web = client()
+    content = assessment_workbook()
+    inspected = web.post("/api/inspect", files={"file": ("avaliacoes.xlsx", content)})
+    assert inspected.status_code == 200
+    data = inspected.json()
+    assert data["kind"] == "assessment"
+    assert [item["question_count"] for item in data["evaluations"]] == [2, 2]
+    assert [item["response_counts"] for item in data["evaluations"]] == [[4], [12]]
+    assert data["evaluations"][0]["rate"] == 87.5
+    assert data["evaluations"][1]["rate"] == 95.83
+    assert any("Linha 6" in warning for warning in data["warnings"])
+    generated = web.post(
+        "/api/generate",
+        files={"file": ("avaliacoes.xlsx", content)},
+        data={"options": json.dumps({"kind": "assessment", "model": "avaliacao_questoes", "title": "Pesquisa", "authors": "Equipe", "source": "Pesquisa interna"})},
+    )
+    assert generated.status_code == 200
+    assert generated.headers["content-type"] == "application/pdf"
+    assert len(PdfReader(io.BytesIO(generated.content)).pages) == 4
+
+
+def test_assessment_rejects_invalid_question_count() -> None:
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.append(["Avaliação", "Questão", "Acertos", "Erros"])
+    sheet.append(["1ª avaliação", 1, 3, -1])
+    output = io.BytesIO()
+    workbook.save(output)
+    response = client().post("/api/inspect", files={"file": ("erro.xlsx", output.getvalue())})
+    assert response.status_code == 422
+    assert "inteiro não negativo" in response.json()["detail"]
+
+
+def test_assessment_accepts_tcc_shape_and_total_in_question_column() -> None:
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.append(["Avaliação", "Questão", "Acertos", "Erros", "% Acerto", "% Erro"])
+    for number in range(1, 16):
+        sheet.append(["1ª avaliação", number, 17, 1, None, None])
+    sheet.append(["1ª avaliação", "TOTAL", 255, 15, None, None])
+    for number in range(1, 15):
+        sheet.append(["2ª avaliação", number, 11, 1, None, None])
+    sheet.append(["2ª avaliação", "TOTAL", 154, 14, None, "8,33%%"])
+    output = io.BytesIO()
+    workbook.save(output)
+    response = client().post("/api/inspect", files={"file": ("tcc.xlsx", output.getvalue())})
+    assert response.status_code == 200
+    data = response.json()
+    assert [item["question_count"] for item in data["evaluations"]] == [15, 14]
+    assert [item["response_counts"] for item in data["evaluations"]] == [[18], [12]]
+    assert [item["correct"] for item in data["evaluations"]] == [255, 154]
+    assert any("Linha 32" in warning for warning in data["warnings"])
+
+
+def test_single_assessment_does_not_claim_different_questions() -> None:
+    content = "Avaliação;Questão;Acertos;Erros\nÚnica;1;4;1\n"
+    response = client().post("/api/inspect", files={"file": ("unica.csv", content.encode())})
+    assert response.status_code == 200
+    assert response.json()["warnings"] == []
+
+
 @pytest.fixture(autouse=True)
 def reset_test_rate_limits() -> None:
     api_module._rate_events.clear()
