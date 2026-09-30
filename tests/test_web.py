@@ -156,8 +156,24 @@ def test_public_api_accepts_upload_without_session() -> None:
     web = client()
     response = web.post("/api/inspect", files={"file": ("dados.csv", b"a;b\n1;2")})
     assert response.status_code == 422
-    assert response.json()["detail"]["message"] == "Nenhuma tabela válida foi encontrada."
+    detail = response.json()["detail"]
+    assert detail["message"] == "Formato de planilha não reconhecido para geração automática."
+    assert "tabela anual" not in str(detail).lower()
     assert web.get("/api/session").status_code == 404
+
+
+def test_recognized_annual_table_with_invalid_values_has_distinct_message() -> None:
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.append(["Região", 2023, 2024, 2025])
+    sheet.append(["4210 Região", 1, "valor inválido", 3])
+    output = io.BytesIO()
+    workbook.save(output)
+    response = client().post("/api/inspect", files={"file": ("anual.xlsx", output.getvalue())})
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["message"] == "Há tabelas com problemas que impedem a geração."
+    assert any(item["code"] == "INVALID_VALUE" for item in detail["diagnostics"])
 
 
 def test_request_body_limit_rejects_large_content_length_before_multipart(

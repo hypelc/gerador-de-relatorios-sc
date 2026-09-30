@@ -510,9 +510,9 @@ def inspect_file(path: str | Path) -> ImportResult:
             diagnostic = Diagnostic(
                 "warning",
                 "SHEET_UNRECOGNIZED",
-                "Aba auxiliar ou sem uma sequencia de pelo menos tres anos validos; nenhuma tabela sera usada automaticamente.",
+                "Esta aba não corresponde a um modelo de tabela reconhecido automaticamente; nenhum dado dela será usado.",
                 f"Aba {sheet.name}",
-                "Confira se existe uma linha com anos e uma coluna de identificacao.",
+                "Para avaliações por questão, confira as colunas Avaliação, Questão, Acertos e Erros. Para séries anuais, confira os anos e a coluna de identificação.",
             )
             diagnostics.append(diagnostic)
             summaries.append(SheetSummary(sheet.name, 0, "nao reconhecida", diagnostic.message))
@@ -522,9 +522,9 @@ def inspect_file(path: str | Path) -> ImportResult:
             Diagnostic(
                 "error",
                 "NO_VALID_TABLE",
-                "Nenhuma tabela anual compativel foi encontrada no arquivo.",
+                "Nenhuma tabela compatível com os modelos disponíveis foi encontrada no arquivo.",
                 source_path.name,
-                "Use .xlsx ou .csv com tres ou mais anos e valores numericos nas linhas seguintes.",
+                "Confira o formato da planilha. Esta versão reconhece modelos específicos de avaliações, séries anuais e indicadores regionais de SC.",
             )
         )
     return ImportResult(
