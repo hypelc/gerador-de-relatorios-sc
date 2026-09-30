@@ -875,6 +875,9 @@ input:focus-visible {
   }
   .recognition-grid strong {
     font-size: 0.83rem;
+    white-space: normal;
+    overflow: visible;
+    word-break: break-word;
   }
   .subheading {
     align-items: stretch;
@@ -951,12 +954,5 @@ input:focus-visible {
   }
   .primary-button:hover:not(:disabled) {
     transform: none;
-  }
-}
-@media (max-width: 600px) {
-  .recognition-grid strong {
-    white-space: normal;
-    overflow: visible;
-    word-break: break-word;
   }
 }

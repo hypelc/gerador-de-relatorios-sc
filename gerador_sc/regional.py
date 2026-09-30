@@ -94,6 +94,8 @@ def _rows(path: Path) -> tuple[str, list[tuple[object, ...]]]:
 
 def read_values(
     path: str | Path,
+    *,
+    metadata: dict[str, dict[str, str]] | None = None,
 ) -> tuple[dict[str, tuple[str, float | None]], float | None, str, str]:
     source = Path(path)
     sheet_name, rows = _rows(source)
@@ -136,7 +138,8 @@ def read_values(
                     f"Regional repetida: {display_name}, linha {row_number}."
                 )
             values[name] = (display_name, number)
-    metadata, _ = read_region_mapping()
+    if metadata is None:
+        metadata, _ = read_region_mapping()
     expected = {item["normalized_name"] for item in metadata.values()}
     extra = set(values) - expected
     if extra:
@@ -233,8 +236,8 @@ def draw_figure(
     indicator: str,
     config: RegionalConfig,
     source_name: str,
-    pdf_output: Path,
-    png_output: Path,
+    pdf_output: Path | None,
+    png_output: Path | None,
 ) -> None:
     records = []
     for number, code in enumerate(sorted(metadata), 1):
@@ -528,32 +531,42 @@ def draw_figure(
         linespacing=1.22,
     )
 
-    pdf_output.parent.mkdir(parents=True, exist_ok=True)
-    png_output.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(
-        pdf_output,
-        facecolor="white",
-        bbox_inches="tight",
-        metadata={
-            "Title": title,
-            "Author": config.authors,
-            "Subject": "Mapa das 17 Regionais de Saude de Santa Catarina",
-            "Creator": (
-                "Gerador de Relatorios SC v0.1.0 "
-                f"{config.processing_context}, Python, Matplotlib"
-            ),
-        },
-    )
-    figure.savefig(png_output, dpi=200, facecolor="white", bbox_inches="tight")
+    if pdf_output is not None:
+        pdf_output.parent.mkdir(parents=True, exist_ok=True)
+        figure.savefig(
+            pdf_output,
+            facecolor="white",
+            bbox_inches="tight",
+            metadata={
+                "Title": title,
+                "Author": config.authors,
+                "Subject": "Mapa das 17 Regionais de Saude de Santa Catarina",
+                "Creator": (
+                    "Gerador de Relatorios SC v0.1.0 "
+                    f"{config.processing_context}, Python, Matplotlib"
+                ),
+            },
+        )
+    if png_output is not None:
+        png_output.parent.mkdir(parents=True, exist_ok=True)
+        figure.savefig(png_output, dpi=200, facecolor="white", bbox_inches="tight")
     plt.close(figure)
 
 
 def render_regional_report(
-    source: str | Path, pdf_output: Path, png_output: Path, config: RegionalConfig
+    source: str | Path,
+    pdf_output: Path,
+    png_output: Path,
+    config: RegionalConfig,
+    output_format: str = "both",
 ) -> None:
-    values, state_value, indicator, _ = read_values(source)
+    if output_format not in {"pdf", "png", "both"}:
+        raise ValueError("Formato de saída regional inválido.")
     metadata, municipalities = read_region_mapping()
+    values, state_value, indicator, _ = read_values(source, metadata=metadata)
     geometries = build_geometries(municipalities)
+    pdf_path = Path(pdf_output) if output_format in {"pdf", "both"} else None
+    png_path = Path(png_output) if output_format in {"png", "both"} else None
     draw_figure(
         metadata,
         geometries,
@@ -562,6 +575,6 @@ def render_regional_report(
         indicator,
         config,
         Path(source).name,
-        pdf_output,
-        png_output,
+        pdf_path,
+        png_path,
     )

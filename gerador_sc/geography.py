@@ -9,7 +9,6 @@ from pyproj import Transformer
 from shapely.geometry import shape
 from shapely.ops import transform
 
-
 MAP_CODES = (
     "4213",
     "4217",

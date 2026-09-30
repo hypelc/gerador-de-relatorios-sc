@@ -214,9 +214,20 @@ export default function App() {
   const stepperRef = useRef(null);
   const activeHeadingRef = useRef(null);
   const previousStepRef = useRef(step);
+  const inspectionRequestRef = useRef(0);
+  const generationRequestRef = useRef(0);
+  const currentFileRef = useRef(null);
+  const inspectedFileRef = useRef(null);
+  const inspectionAbortRef = useRef(null);
+  const generationAbortRef = useRef(null);
+  const busyOwnerRef = useRef(null);
 
   useEffect(
     () => () => {
+      inspectionRequestRef.current += 1;
+      generationRequestRef.current += 1;
+      inspectionAbortRef.current?.abort();
+      generationAbortRef.current?.abort();
       if (previewRef.current) URL.revokeObjectURL(previewRef.current);
     },
     [],
@@ -262,8 +273,33 @@ export default function App() {
     setPreview(null);
   }
 
+  function invalidateGeneration() {
+    generationRequestRef.current += 1;
+    generationAbortRef.current?.abort();
+    generationAbortRef.current = null;
+    if (busyOwnerRef.current?.kind === "generate") {
+      busyOwnerRef.current = null;
+      setBusy("");
+    }
+  }
+
+  function goToStep(nextStep) {
+    invalidateGeneration();
+    setError(null);
+    setStep(nextStep);
+  }
+
   async function inspectFile(chosen) {
     if (!chosen) return;
+    invalidateGeneration();
+    const requestId = ++inspectionRequestRef.current;
+    inspectionAbortRef.current?.abort();
+    const controller = new AbortController();
+    inspectionAbortRef.current = controller;
+    const busyOwner = { kind: "inspect", requestId };
+    busyOwnerRef.current = busyOwner;
+    currentFileRef.current = chosen;
+    inspectedFileRef.current = null;
     setFile(chosen);
     setInspection(null);
     setStep(1);
@@ -276,9 +312,21 @@ export default function App() {
       const response = await fetch("/api/inspect", {
         method: "POST",
         body: form,
+        signal: controller.signal,
       });
+      if (
+        requestId !== inspectionRequestRef.current ||
+        currentFileRef.current !== chosen
+      )
+        return;
       if (!response.ok) throw await apiError(response);
       const data = await response.json();
+      if (
+        requestId !== inspectionRequestRef.current ||
+        currentFileRef.current !== chosen
+      )
+        return;
+      inspectedFileRef.current = chosen;
       setInspection(data);
       setMeta({
         title:
@@ -308,13 +356,25 @@ export default function App() {
       setConfirmExclusions(false);
       setStep(2);
     } catch (problem) {
-      setError(problem);
+      if (
+        requestId === inspectionRequestRef.current &&
+        currentFileRef.current === chosen &&
+        problem.name !== "AbortError"
+      )
+        setError(problem);
     } finally {
-      setBusy("");
+      if (inspectionAbortRef.current === controller)
+        inspectionAbortRef.current = null;
+      if (busyOwnerRef.current === busyOwner) {
+        busyOwnerRef.current = null;
+        setBusy("");
+      }
     }
   }
 
   function toggleTable(id) {
+    invalidateGeneration();
+    clearPreview();
     setCategoryId("");
     if (model === "barras_categoria") setModel("paineis");
     const next = selectedIds.includes(id)
@@ -348,6 +408,7 @@ export default function App() {
   }
 
   function chooseCategory(id) {
+    invalidateGeneration();
     setCategoryId(id);
     setSelectedIds([]);
     setYears([]);
@@ -356,6 +417,7 @@ export default function App() {
   }
 
   function updateMeta(field, value) {
+    invalidateGeneration();
     setMeta((current) => ({ ...current, [field]: value }));
     clearPreview();
   }
@@ -385,7 +447,23 @@ export default function App() {
   }
 
   async function generate(format = "pdf", downloadImmediately = false) {
-    if (!file || !inspection) return;
+    if (
+      !file ||
+      !inspection ||
+      currentFileRef.current !== file ||
+      inspectedFileRef.current !== file
+    )
+      return;
+    const requestId = ++generationRequestRef.current;
+    generationAbortRef.current?.abort();
+    const controller = new AbortController();
+    generationAbortRef.current = controller;
+    const busyOwner = { kind: "generate", requestId };
+    busyOwnerRef.current = busyOwner;
+    const isCurrent = () =>
+      requestId === generationRequestRef.current &&
+      currentFileRef.current === file &&
+      inspectedFileRef.current === file;
     setBusy(format === "png" ? "png" : "generate");
     setError(null);
     const form = new FormData();
@@ -395,14 +473,21 @@ export default function App() {
       const response = await fetch("/api/generate", {
         method: "POST",
         body: form,
+        signal: controller.signal,
       });
+      if (!isCurrent()) return;
       if (!response.ok) throw await apiError(response);
       const blob = await response.blob();
+      if (!isCurrent()) return;
       const filename =
         response.headers
           .get("Content-Disposition")
           ?.match(/filename="([^"]+)"/)?.[1] || `relatorio.${format}`;
       const url = URL.createObjectURL(blob);
+      if (!isCurrent()) {
+        URL.revokeObjectURL(url);
+        return;
+      }
       if (downloadImmediately) {
         download(url, filename);
         setTimeout(() => URL.revokeObjectURL(url), 30000);
@@ -413,9 +498,14 @@ export default function App() {
         setStep(4);
       }
     } catch (problem) {
-      setError(problem);
+      if (isCurrent() && problem.name !== "AbortError") setError(problem);
     } finally {
-      setBusy("");
+      if (generationAbortRef.current === controller)
+        generationAbortRef.current = null;
+      if (busyOwnerRef.current === busyOwner) {
+        busyOwnerRef.current = null;
+        setBusy("");
+      }
     }
   }
 
@@ -470,8 +560,7 @@ export default function App() {
                 disabled={index + 1 > step || (index + 1 > 1 && !inspection)}
                 aria-current={step === index + 1 ? "step" : undefined}
                 onClick={() => {
-                  setError(null);
-                  setStep(index + 1);
+                  goToStep(index + 1);
                 }}
               >
                 <span>
@@ -524,7 +613,6 @@ export default function App() {
                 className="secondary-button"
                 type="button"
                 onClick={() => inputRef.current?.click()}
-                disabled={!!busy}
               >
                 {busy === "inspect" ? "Lendo planilha…" : "Escolher arquivo"}
               </button>
@@ -567,6 +655,9 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => {
+                    invalidateGeneration();
+                    currentFileRef.current = null;
+                    inspectedFileRef.current = null;
                     setStep(1);
                     setInspection(null);
                     setFile(null);
@@ -684,9 +775,10 @@ export default function App() {
                     <input
                       type="checkbox"
                       checked={confirmExclusions}
-                      onChange={(event) =>
-                        setConfirmExclusions(event.target.checked)
-                      }
+                      onChange={(event) => {
+                        invalidateGeneration();
+                        setConfirmExclusions(event.target.checked);
+                      }}
                     />
                     Confirmo que {invalidTables.length} tabela(s) com problema
                     ficarão fora do relatório.
@@ -745,7 +837,7 @@ export default function App() {
               <button
                 className="text-button"
                 type="button"
-                onClick={() => setStep(1)}
+                onClick={() => goToStep(1)}
               >
                 <Icon name="back" size={17} />
                 Voltar
@@ -760,7 +852,7 @@ export default function App() {
                 }
                 onClick={() => {
                   setError(null);
-                  setStep(3);
+                  goToStep(3);
                 }}
               >
                 Continuar
@@ -804,6 +896,7 @@ export default function App() {
                       ))
                   }
                   onChoose={(value) => {
+                    invalidateGeneration();
                     setModel(value);
                     if (value === "mapa") {
                       const available = years.filter((year) =>
@@ -880,6 +973,7 @@ export default function App() {
                         }
                         checked={years.includes(year)}
                         onChange={() => {
+                          invalidateGeneration();
                           setYears((current) =>
                             ["barras", "pizza"].includes(model)
                               ? [year]
@@ -1003,7 +1097,7 @@ export default function App() {
               <button
                 className="text-button"
                 type="button"
-                onClick={() => setStep(2)}
+                onClick={() => goToStep(2)}
               >
                 <Icon name="back" size={17} />
                 Voltar
@@ -1045,7 +1139,7 @@ export default function App() {
               <button
                 className="text-button"
                 type="button"
-                onClick={() => setStep(3)}
+                onClick={() => goToStep(3)}
               >
                 <Icon name="back" size={17} />
                 Ajustar relatório

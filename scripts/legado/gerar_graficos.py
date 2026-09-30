@@ -3,18 +3,18 @@ import argparse
 import html
 import json
 import math
-from pathlib import Path
 import re
 import textwrap
 import unicodedata
+from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import openpyxl
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.ticker import FuncFormatter, MaxNLocator
-import openpyxl
-
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -61,7 +61,17 @@ def extrair(caminho):
                 raise ValueError(f"Tabela sem séries em {sheet.title}, linha {i + 1}")
             chave = normalizar(sheet.title).upper()
             tipo = "mortalidade" if "MORTALIDADE" in chave else "nascidos" if "NASCIDOS" in chave else "vacina"
-            tabelas.append(dict(aba=sheet.title, titulo=titulo, anos=anos, series=series, tipo=tipo, macro=macro, cabecalho=i + 1))
+            tabelas.append(
+                {
+                    "aba": sheet.title,
+                    "titulo": titulo,
+                    "anos": anos,
+                    "series": series,
+                    "tipo": tipo,
+                    "macro": macro,
+                    "cabecalho": i + 1,
+                }
+            )
     wb.close()
     return tabelas
 

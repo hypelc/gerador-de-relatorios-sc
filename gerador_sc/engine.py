@@ -7,13 +7,18 @@ import shutil
 import tempfile
 import threading
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from .importers import inspect_file, remap_table
-from .models import Diagnostic, ImportResult, ReportArtifact, ReportConfig, ReportValidationError
+from .models import (
+    Diagnostic,
+    ImportResult,
+    ReportArtifact,
+    ReportConfig,
+    ReportValidationError,
+)
 from .rendering import render_report
-
 
 ProgressCallback = Callable[[int, str], None]
 
