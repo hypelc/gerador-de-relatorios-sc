@@ -246,10 +246,19 @@ def _inspect(path: Path) -> dict[str, object]:
     result = ReportService().inspect(path)
     if not result.valid_tables and not result.categorical_tables:
         diagnostics = [diagnostic.to_dict() for diagnostic in result.diagnostics]
+        diagnostics.extend(
+            diagnostic.to_dict()
+            for table in result.tables
+            for diagnostic in table.diagnostics
+        )
         raise HTTPException(
             422,
             {
-                "message": "Nenhuma tabela válida foi encontrada.",
+                "message": (
+                    "Há tabelas com problemas que impedem a geração."
+                    if result.tables
+                    else "Formato de planilha não reconhecido para geração automática."
+                ),
                 "diagnostics": diagnostics,
             },
         )
