@@ -21,6 +21,7 @@ from openpyxl.utils.exceptions import InvalidFileException
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 
+from gerador_sc.assessment import read_assessment, render_assessment_report
 from gerador_sc.engine import ReportService
 from gerador_sc.models import ReportConfig, ReportValidationError
 from gerador_sc.regional import (
@@ -199,6 +200,9 @@ def _is_regional(path: Path) -> bool:
 
 
 def _inspect(path: Path) -> dict[str, object]:
+    assessment = read_assessment(path)
+    if assessment is not None:
+        return {"filename": path.name, **assessment.to_dict()}
     if _is_regional(path):
         metadata, _ = read_region_mapping()
         values, state_value, indicator, sheet = read_values(path, metadata=metadata)
@@ -281,6 +285,21 @@ def _generate(path: Path, options: dict[str, object]) -> tuple[bytes, str, str]:
     unit = _text(options.get("unit", ""), "unidade", 80)
     with tempfile.TemporaryDirectory(prefix="gerador-web-output-") as temporary:
         directory = Path(temporary)
+        if kind == "assessment":
+            assessment = read_assessment(path)
+            if assessment is None or options.get("model") != "avaliacao_questoes":
+                raise HTTPException(422, "O modelo de avaliações não corresponde à planilha enviada.")
+            target = directory / "relatorio.pdf"
+            with _render_lock:
+                render_assessment_report(
+                    assessment,
+                    target,
+                    title=title,
+                    authors=authors,
+                    source=source,
+                    source_name=path.name,
+                )
+            return target.read_bytes(), "application/pdf", _filename(title, "pdf")
         if kind == "regional":
             if not _is_regional(path):
                 raise HTTPException(

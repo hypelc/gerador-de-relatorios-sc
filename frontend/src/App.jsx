@@ -31,6 +31,10 @@ const modelLabels = {
     "Mapa das Regionais de Saúde",
     "Uma figura com as 17 Regionais, escala de valores e tabela de consulta.",
   ],
+  avaliacao_questoes: [
+    "Avaliações por questão",
+    "Resumo geral e um gráfico separado para cada avaliação, com a quantidade de respostas.",
+  ],
 };
 
 async function apiError(response) {
@@ -329,10 +333,9 @@ export default function App() {
       inspectedFileRef.current = chosen;
       setInspection(data);
       setMeta({
-        title:
-          data.kind === "regional"
-            ? data.suggested_title
-            : "Relatório de indicadores",
+        title: ["regional", "assessment"].includes(data.kind)
+          ? data.suggested_title
+          : "Relatório de indicadores",
         authors: "",
         indicator: "",
         source: "",
@@ -347,6 +350,11 @@ export default function App() {
         );
         setYears(first?.anos || []);
         setModel(first ? "paineis" : "barras_categoria");
+      } else if (data.kind === "assessment") {
+        setSelectedIds([]);
+        setCategoryId("");
+        setYears([]);
+        setModel("avaliacao_questoes");
       } else {
         setSelectedIds([]);
         setCategoryId("");
@@ -433,6 +441,8 @@ export default function App() {
     };
     if (inspection.kind === "regional")
       return { ...base, period: meta.period.trim(), format };
+    if (inspection.kind === "assessment")
+      return { ...base, model: "avaliacao_questoes" };
     return {
       ...base,
       ...(selectedCategory ? { category_id: selectedCategory.id } : {}),
@@ -785,6 +795,62 @@ export default function App() {
                   </label>
                 )}
               </>
+            ) : inspection.kind === "assessment" ? (
+              <>
+                <div className="recognition-grid">
+                  <div>
+                    <span>Formato reconhecido</span>
+                    <strong>Avaliações por questão</strong>
+                  </div>
+                  <div>
+                    <span>Aba</span>
+                    <strong>{inspection.sheet}</strong>
+                  </div>
+                  <div>
+                    <span>Avaliações</span>
+                    <strong>{inspection.evaluations.length}</strong>
+                  </div>
+                  <div>
+                    <span>Percentuais</span>
+                    <strong>Recalculados</strong>
+                  </div>
+                </div>
+                <div className="subheading">
+                  <div>
+                    <h3>Confira os resultados</h3>
+                    <p>
+                      A planilha não traz o texto das perguntas. Cada avaliação
+                      terá seu próprio gráfico.
+                    </p>
+                  </div>
+                </div>
+                <div className="regional-grid">
+                  {inspection.evaluations.map((item) => (
+                    <div key={item.name}>
+                      <span>
+                        {item.name} · {item.question_count} questões ·{" "}
+                        {item.response_counts.join(" a ")} respostas por questão
+                      </span>
+                      <strong>
+                        {item.rate.toLocaleString("pt-BR", {
+                          maximumFractionDigits: 2,
+                        })}
+                        % de acertos
+                      </strong>
+                    </div>
+                  ))}
+                </div>
+                {!!inspection.warnings.length && (
+                  <div className="error-panel" role="status">
+                    <strong>Conferência dos dados</strong>
+                    <ul>
+                      {inspection.warnings.map((warning, index) => (
+                        <li key={index}>{warning}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </>
             ) : (
               <>
                 <div className="recognition-grid">
@@ -877,9 +943,11 @@ export default function App() {
             <div className="model-grid">
               {(inspection.kind === "regional"
                 ? ["mapa_regional"]
-                : selectedCategory
-                  ? ["barras_categoria"]
-                  : ["paineis", "linhas", "barras", "pizza", "mapa"]
+                : inspection.kind === "assessment"
+                  ? ["avaliacao_questoes"]
+                  : selectedCategory
+                    ? ["barras_categoria"]
+                    : ["paineis", "linhas", "barras", "pizza", "mapa"]
               ).map((value) => (
                 <ModelCard
                   key={value}
@@ -914,6 +982,14 @@ export default function App() {
                 />
               ))}
             </div>
+            {inspection.kind === "assessment" && (
+              <p className="hint-line">
+                O relatório mostra a proporção de acertos de cada avaliação e de
+                cada questão. Sem confirmar a equivalência das perguntas e dos
+                participantes, ele não conclui melhora ou piora entre as
+                avaliações.
+              </p>
+            )}
             {inspection.kind === "annual" && !selectedCategory && !mapReady && (
               <p className="hint-line">
                 O mapa exige uma tabela com códigos de macrorregiões reais de
@@ -1129,7 +1205,8 @@ export default function App() {
                 Revise o resultado
               </h2>
               <p>
-                Confira o título, as regiões e a legenda antes de compartilhar.
+                Confira o título, os dados e as observações antes de
+                compartilhar.
               </p>
             </div>
             <div className="preview-frame">
