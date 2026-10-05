@@ -41,6 +41,10 @@ SUMMARY_HEADER_ALIASES = {
     "correct": ("acertos", "corretas"),
     "incorrect": ("erros", "incorretas"),
 }
+SIDE_BY_SIDE_HEADER_LAYOUTS = {
+    "left": ("item", "erros", "acertos", "total"),
+    "right": ("item", "total", "acertos", "erros"),
+}
 
 
 @dataclass(frozen=True)
@@ -131,6 +135,15 @@ class AssessmentSelectionRequired(ValueError):
         self.candidates = candidates
 
 
+@dataclass(frozen=True)
+class SideBySideBlock:
+    name: str
+    item_column: int
+    incorrect_column: int
+    correct_column: int
+    total_column: int
+
+
 def _rows(path: Path):
     if path.suffix.lower() == ".xlsx":
         workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
@@ -203,6 +216,25 @@ def _resolve_header_columns(
 def _is_base_header(header: tuple[object, ...]) -> bool:
     headings = {_key(value) for value in header if _key(value)}
     return all(any(alias in headings for alias in aliases) for aliases in BASE_HEADER_ALIASES.values())
+
+
+def _matching_header_starts(
+    header: tuple[object, ...], expected: tuple[str, ...]
+) -> list[int]:
+    normalized = tuple(_key(value) for value in header)
+    width = len(expected)
+    return [
+        start
+        for start in range(len(normalized) - width + 1)
+        if normalized[start : start + width] == expected
+    ]
+
+
+def _is_side_by_side_header(header: tuple[object, ...]) -> bool:
+    return any(
+        _matching_header_starts(header, expected)
+        for expected in SIDE_BY_SIDE_HEADER_LAYOUTS.values()
+    )
 
 
 def _rows_after_candidate(
@@ -494,6 +526,271 @@ def _parse_base_candidate(
     return Assessment(sheet, evaluations, tuple(warnings))
 
 
+def _side_by_side_question_number(value: object, label: str) -> int:
+    normalized = _key(value)
+    match = re.fullmatch(r"(?:q\s*(\d+)|questao\s*(\d+))", normalized)
+    if match is None:
+        raise ValueError(
+            f"{label}: rótulo {value!r} inválido; use Q1 ou Questão 1."
+        )
+    number = int(match.group(1) or match.group(2))
+    if number == 0:
+        raise ValueError(f"{label}: a questão deve começar em 1.")
+    return number
+
+
+def _is_block_summary_label(value: object) -> bool:
+    normalized = _key(value)
+    return normalized in {"total", "resumo"} or normalized.startswith(
+        ("total ", "resumo ")
+    )
+
+
+def _is_block_footer_label(value: object) -> bool:
+    normalized = _key(value)
+    return normalized == "indicador" or re.fullmatch(
+        r"taxa de acerto [ab]", normalized
+    ) is not None
+
+
+def _parse_side_by_side_candidate(
+    sheet: str,
+    first_rows: tuple[tuple[object, ...], ...],
+    row_iterator,
+    header_index: int,
+    next_header_index: int | None,
+) -> Assessment:
+    header = first_rows[header_index]
+    label = f"Aba {sheet}, cabeçalho linha {header_index + 1}"
+    left_starts = _matching_header_starts(
+        header, SIDE_BY_SIDE_HEADER_LAYOUTS["left"]
+    )
+    right_starts = _matching_header_starts(
+        header, SIDE_BY_SIDE_HEADER_LAYOUTS["right"]
+    )
+    if len(left_starts) != 1 or len(right_starts) != 1:
+        found = []
+        if left_starts:
+            found.append("bloco esquerdo")
+        if right_starts:
+            found.append("bloco direito")
+        if len(left_starts) > 1 or len(right_starts) > 1:
+            raise ValueError(
+                f"{label}: há cabeçalhos repetidos ou ambíguos nos blocos lado a lado."
+            )
+        raise ValueError(
+            f"{label}: formato parcial; são necessários os blocos esquerdo e direito "
+            f"com cabeçalhos completos (encontrado: {', '.join(found) or 'nenhum'})."
+        )
+
+    left_start, right_start = left_starts[0], right_starts[0]
+    if right_start <= left_start:
+        raise ValueError(
+            f"{label}: os cabeçalhos estão em ordem incompatível; não foi possível "
+            "identificar os blocos esquerdo e direito."
+        )
+    if right_start < left_start + 5:
+        raise ValueError(
+            f"{label}: os blocos se sobrepõem ou não têm coluna separadora vazia."
+        )
+    if any(_key(value) for value in header[left_start + 4 : right_start]):
+        raise ValueError(
+            f"{label}: há conteúdo entre os dois blocos; os limites estão ambíguos."
+        )
+
+    blocks = (
+        SideBySideBlock("Bloco esquerdo", left_start, left_start + 1, left_start + 2, left_start + 3),
+        SideBySideBlock("Bloco direito", right_start, right_start + 3, right_start + 2, right_start + 1),
+    )
+    questions: dict[str, list[Question]] = {block.name: [] for block in blocks}
+    question_numbers: dict[str, set[int]] = {block.name: set() for block in blocks}
+    active = {block.name: True for block in blocks}
+    summary_rows: dict[str, list[tuple[int, str, int, int, int]]] = {
+        block.name: [] for block in blocks
+    }
+    reported_rates: list[tuple[int, str, object]] = []
+    warnings: list[str] = []
+
+    rows = _rows_after_candidate(
+        first_rows, row_iterator, header_index, next_header_index
+    )
+    for row_index, row in enumerate(rows, start=header_index + 2):
+        separator_values = [
+            (column, _cell(row, column))
+            for column in range(left_start + 4, right_start)
+            if _cell(row, column) is not None
+            and str(_cell(row, column)).strip() != ""
+        ]
+        if separator_values:
+            details = ", ".join(
+                f"coluna {column + 1}: {value!r}"
+                for column, value in separator_values
+            )
+            raise ValueError(
+                f"Aba {sheet}, linha {row_index}: a coluna separadora entre os blocos "
+                f"deve permanecer vazia ({details}); nenhum dado fora dos blocos foi "
+                "ignorado."
+            )
+
+        for column, value in enumerate(row):
+            rate_label = _key(value)
+            if re.fullmatch(r"taxa de acerto [ab]", rate_label):
+                reported_rates.append((row_index, str(value), _cell(row, column + 1)))
+
+        for block in blocks:
+            values = (
+                _cell(row, block.item_column),
+                _cell(row, block.incorrect_column),
+                _cell(row, block.correct_column),
+                _cell(row, block.total_column),
+            )
+            if all(value is None or str(value).strip() == "" for value in values):
+                continue
+
+            raw_item = values[0]
+            if _is_block_summary_label(raw_item):
+                try:
+                    incorrect = _integer(
+                        values[1], f"Aba {sheet}, linha {row_index}, Erros informados"
+                    )
+                    correct = _integer(
+                        values[2], f"Aba {sheet}, linha {row_index}, Acertos informados"
+                    )
+                    total = _integer(
+                        values[3], f"Aba {sheet}, linha {row_index}, Total informado"
+                    )
+                except ValueError as error:
+                    warnings.append(
+                        f"{error} A conferência do {block.name} não foi usada; o "
+                        "relatório usa as questões detalhadas."
+                    )
+                else:
+                    summary_rows[block.name].append(
+                        (row_index, str(raw_item), correct, incorrect, total)
+                    )
+                active[block.name] = False
+                continue
+
+            if _is_block_footer_label(raw_item):
+                active[block.name] = False
+                continue
+
+            if not active[block.name]:
+                try:
+                    _side_by_side_question_number(
+                        raw_item, f"Aba {sheet}, linha {row_index}, {block.name}"
+                    )
+                except ValueError:
+                    raise ValueError(
+                        f"Aba {sheet}, linha {row_index}: conteúdo inesperado após a "
+                        f"conferência do {block.name}."
+                    ) from None
+                raise ValueError(
+                    f"Aba {sheet}, linha {row_index}: questão após o total do "
+                    f"{block.name}; o bloco está ambíguo."
+                )
+
+            number = _side_by_side_question_number(
+                raw_item, f"Aba {sheet}, linha {row_index}, {block.name}"
+            )
+            incorrect = _integer(
+                values[1], f"Aba {sheet}, linha {row_index}, Erros"
+            )
+            correct = _integer(
+                values[2], f"Aba {sheet}, linha {row_index}, Acertos"
+            )
+            total = _integer(
+                values[3], f"Aba {sheet}, linha {row_index}, Total"
+            )
+            if total != correct + incorrect:
+                raise ValueError(
+                    f"Aba {sheet}, linha {row_index}, {block.name}: Total informado "
+                    f"({total}) diverge de Acertos + Erros ({correct + incorrect})."
+                )
+            if total == 0:
+                raise ValueError(
+                    f"Aba {sheet}, linha {row_index}, {block.name}: questão sem respostas."
+                )
+            if number in question_numbers[block.name]:
+                raise ValueError(
+                    f"Aba {sheet}, linha {row_index}, {block.name}: questão {number} "
+                    "duplicada."
+                )
+            question_numbers[block.name].add(number)
+            questions[block.name].append(Question(number, correct, incorrect))
+
+    for block in blocks:
+        block_questions = questions[block.name]
+        if not block_questions:
+            raise ValueError(
+                f"{label}: não há questões válidas no {block.name}; os dois blocos "
+                "são necessários e não serão gerados parcialmente."
+            )
+        block_questions.sort(key=lambda item: item.number)
+
+    evaluations = tuple(
+        Evaluation(block.name, tuple(questions[block.name])) for block in blocks
+    )
+    evaluation_by_name = {evaluation.name: evaluation for evaluation in evaluations}
+    for block in blocks:
+        evaluation = evaluation_by_name[block.name]
+        for row_index, control_name, correct, incorrect, total in summary_rows[block.name]:
+            if (correct, incorrect, total) != (
+                evaluation.correct,
+                evaluation.incorrect,
+                evaluation.responses,
+            ):
+                warnings.append(
+                    f"Aba {sheet}, linha {row_index}: {control_name} do {block.name} "
+                    f"informa {correct} acertos, {incorrect} erros e {total} respostas; "
+                    f"a soma das questões é {evaluation.correct} acertos, "
+                    f"{evaluation.incorrect} erros e {evaluation.responses} respostas. "
+                    f"O relatório usa as questões detalhadas do {block.name}."
+                )
+        if len({question.responses for question in evaluation.questions}) > 1:
+            warnings.append(
+                f"{block.name}: o número de respostas varia entre questões."
+            )
+
+    remaining_rates = [evaluation.rate for evaluation in evaluations]
+    calculated_rates = ", ".join(
+        f"{evaluation.name}: {_percent_label(evaluation.rate)}"
+        for evaluation in evaluations
+    )
+    for row_index, rate_label, raw_rate in reported_rates:
+        informed = _percent(raw_rate)
+        if informed is None:
+            warnings.append(
+                f"Aba {sheet}, linha {row_index}: {rate_label} não contém uma taxa "
+                f"válida; taxas calculadas dos blocos: {calculated_rates}. O relatório "
+                "usa as contagens detalhadas."
+            )
+            continue
+        matching_index = next(
+            (
+                index
+                for index, calculated in enumerate(remaining_rates)
+                if abs(informed - calculated) <= 0.0051
+            ),
+            None,
+        )
+        if matching_index is None:
+            warnings.append(
+                f"Aba {sheet}, linha {row_index}: {rate_label} informa "
+                f"{_percent_label(informed)}; taxas calculadas dos blocos: "
+                f"{calculated_rates}. O relatório usa as contagens detalhadas."
+            )
+        else:
+            remaining_rates.pop(matching_index)
+
+    if len(evaluations) > 1:
+        warnings.append(
+            "A planilha não informa o texto das perguntas; números iguais não comprovam "
+            "questões equivalentes nem evolução individual."
+        )
+    return Assessment(sheet, evaluations, tuple(warnings))
+
+
 def _is_metadata_header(row: tuple[object, ...]) -> bool:
     return (
         _key(_cell(row, 0)) == "observacao"
@@ -641,6 +938,8 @@ def read_assessment(
             columns = {_key(value) for value in header if _key(value)}
             if _is_base_header(header):
                 candidate_headers.append((header_index, "base_multisheet"))
+            elif _is_side_by_side_header(header):
+                candidate_headers.append((header_index, "side_by_side"))
             elif all(name in columns for name in REQUIRED_HEADERS):
                 candidate_headers.append((header_index, "traditional"))
         if not candidate_headers:
@@ -657,6 +956,14 @@ def read_assessment(
             try:
                 if candidate_type == "base_multisheet":
                     candidate = _parse_base_candidate(
+                        sheet,
+                        first_rows,
+                        candidate_rows,
+                        header_index,
+                        next_header_index,
+                    )
+                elif candidate_type == "side_by_side":
+                    candidate = _parse_side_by_side_candidate(
                         sheet,
                         first_rows,
                         candidate_rows,
