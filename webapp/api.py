@@ -21,7 +21,11 @@ from openpyxl.utils.exceptions import InvalidFileException
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 
-from gerador_sc.assessment import read_assessment, render_assessment_report
+from gerador_sc.assessment import (
+    AssessmentSelectionRequired,
+    read_assessment,
+    render_assessment_report,
+)
 from gerador_sc.engine import ReportService
 from gerador_sc.models import ReportConfig, ReportValidationError
 from gerador_sc.regional import (
@@ -199,8 +203,16 @@ def _is_regional(path: Path) -> bool:
     return normalize_name(str(first or "")) == "REGIONAIS"
 
 
-def _inspect(path: Path) -> dict[str, object]:
-    assessment = read_assessment(path)
+def _inspect(path: Path, candidate_id: str | None = None) -> dict[str, object]:
+    try:
+        assessment = read_assessment(path, candidate_id)
+    except AssessmentSelectionRequired as error:
+        return {
+            "kind": "assessment_choices",
+            "filename": path.name,
+            "message": str(error),
+            "candidates": error.candidates,
+        }
     if assessment is not None:
         return {"filename": path.name, **assessment.to_dict()}
     if _is_regional(path):
@@ -295,7 +307,10 @@ def _generate(path: Path, options: dict[str, object]) -> tuple[bytes, str, str]:
     with tempfile.TemporaryDirectory(prefix="gerador-web-output-") as temporary:
         directory = Path(temporary)
         if kind == "assessment":
-            assessment = read_assessment(path)
+            candidate_id = options.get("candidate_id")
+            if candidate_id is not None and not isinstance(candidate_id, str):
+                raise HTTPException(422, "Seleção de aba ou bloco inválida.")
+            assessment = read_assessment(path, candidate_id)
             if assessment is None or options.get("model") != "avaliacao_questoes":
                 raise HTTPException(422, "O modelo de avaliações não corresponde à planilha enviada.")
             target = directory / "relatorio.pdf"
@@ -430,12 +445,16 @@ def create_app() -> FastAPI:
         return {"status": "ok", "version": VERSION}
 
     @app.post("/api/inspect")
-    async def inspect(request: Request, file: Annotated[UploadFile, File()]):
+    async def inspect(
+        request: Request,
+        file: Annotated[UploadFile, File()],
+        candidate_id: Annotated[str | None, Form()] = None,
+    ):
         _limit(request, "inspect", 30, 60)
         with tempfile.TemporaryDirectory(prefix="gerador-web-upload-") as temporary:
             path = await run_in_threadpool(_copy_upload, file, Path(temporary))
             try:
-                return await run_in_threadpool(_inspect, path)
+                return await run_in_threadpool(_inspect, path, candidate_id)
             except (
                 UnicodeError,
                 InvalidFileException,

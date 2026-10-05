@@ -293,7 +293,7 @@ export default function App() {
     setStep(nextStep);
   }
 
-  async function inspectFile(chosen) {
+  async function inspectFile(chosen, candidateId = null) {
     if (!chosen) return;
     invalidateGeneration();
     const requestId = ++inspectionRequestRef.current;
@@ -312,6 +312,7 @@ export default function App() {
     setBusy("inspect");
     const form = new FormData();
     form.append("file", chosen);
+    if (candidateId) form.append("candidate_id", candidateId);
     try {
       const response = await fetch("/api/inspect", {
         method: "POST",
@@ -332,6 +333,11 @@ export default function App() {
         return;
       inspectedFileRef.current = chosen;
       setInspection(data);
+      if (data.kind === "assessment_choices") {
+        setConfirmExclusions(false);
+        setStep(2);
+        return;
+      }
       setMeta({
         title: ["regional", "assessment"].includes(data.kind)
           ? data.suggested_title
@@ -378,6 +384,10 @@ export default function App() {
         setBusy("");
       }
     }
+  }
+
+  function selectAssessmentCandidate(candidateId) {
+    if (file) inspectFile(file, candidateId);
   }
 
   function toggleTable(id) {
@@ -442,7 +452,13 @@ export default function App() {
     if (inspection.kind === "regional")
       return { ...base, period: meta.period.trim(), format };
     if (inspection.kind === "assessment")
-      return { ...base, model: "avaliacao_questoes" };
+      return {
+        ...base,
+        model: "avaliacao_questoes",
+        ...(inspection.candidate_id
+          ? { candidate_id: inspection.candidate_id }
+          : {}),
+      };
     return {
       ...base,
       ...(selectedCategory ? { category_id: selectedCategory.id } : {}),
@@ -677,7 +693,50 @@ export default function App() {
                 </button>
               </div>
             </div>
-            {inspection.kind === "annual" ? (
+            {inspection.kind === "assessment_choices" ? (
+              <>
+                <div className="subheading">
+                  <div>
+                    <h3>Escolha a aba ou o bloco detalhado</h3>
+                    <p>
+                      Há mais de uma tabela válida. Escolha qual delas deve ser
+                      usada; os dados não serão combinados.
+                    </p>
+                  </div>
+                </div>
+                <div
+                  className="table-list"
+                  aria-label="Tabelas de avaliação disponíveis"
+                >
+                  {inspection.candidates.map((candidate) => (
+                    <button
+                      className="table-row assessment-candidate"
+                      type="button"
+                      key={candidate.id}
+                      disabled={busy === "inspect"}
+                      onClick={() => selectAssessmentCandidate(candidate.id)}
+                    >
+                      <span className="table-title">
+                        <strong>
+                          {candidate.sheet} · cabeçalho na linha{" "}
+                          {candidate.header_row}
+                        </strong>
+                        {candidate.evaluations.map((item) => (
+                          <small key={item.name}>
+                            {item.name} · {item.question_count} questões ·{" "}
+                            {item.correct} acertos · {item.incorrect} erros ·{" "}
+                            {item.rate.toLocaleString("pt-BR", {
+                              maximumFractionDigits: 2,
+                            })}
+                            %
+                          </small>
+                        ))}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : inspection.kind === "annual" ? (
               <>
                 <div className="recognition-grid">
                   <div>
@@ -824,7 +883,7 @@ export default function App() {
                     </p>
                   </div>
                 </div>
-                <div className="regional-grid">
+                <div className="regional-grid assessment-grid">
                   {inspection.evaluations.map((item) => (
                     <div key={item.name}>
                       <span>
@@ -832,6 +891,8 @@ export default function App() {
                         {item.response_counts.join(" a ")} respostas por questão
                       </span>
                       <strong>
+                        {item.correct} acertos · {item.incorrect} erros ·{" "}
+                        {item.total_responses} respostas no total ·{" "}
                         {item.rate.toLocaleString("pt-BR", {
                           maximumFractionDigits: 2,
                         })}
@@ -899,32 +960,36 @@ export default function App() {
                 <p className="hint-line">{inspection.notes.join(" ")}</p>
               </>
             )}
-            <div className="card-actions">
-              <button
-                className="text-button"
-                type="button"
-                onClick={() => goToStep(1)}
-              >
-                <Icon name="back" size={17} />
-                Voltar
-              </button>
-              <button
-                className="primary-button"
-                type="button"
-                disabled={
-                  inspection.kind === "annual" &&
-                  ((!selectedIds.length && !categoryId) ||
-                    (!categoryId && invalidTables.length && !confirmExclusions))
-                }
-                onClick={() => {
-                  setError(null);
-                  goToStep(3);
-                }}
-              >
-                Continuar
-                <Icon name="arrow" size={17} />
-              </button>
-            </div>
+            {inspection.kind !== "assessment_choices" && (
+              <div className="card-actions">
+                <button
+                  className="text-button"
+                  type="button"
+                  onClick={() => goToStep(1)}
+                >
+                  <Icon name="back" size={17} />
+                  Voltar
+                </button>
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={
+                    inspection.kind === "annual" &&
+                    ((!selectedIds.length && !categoryId) ||
+                      (!categoryId &&
+                        invalidTables.length &&
+                        !confirmExclusions))
+                  }
+                  onClick={() => {
+                    setError(null);
+                    goToStep(3);
+                  }}
+                >
+                  Continuar
+                  <Icon name="arrow" size={17} />
+                </button>
+              </div>
+            )}
           </section>
         )}
 

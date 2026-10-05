@@ -462,6 +462,23 @@ input:focus-visible {
   border-bottom: 1px solid #e7efed;
   cursor: pointer;
 }
+.assessment-candidate {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #e7efed;
+  background: white;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.assessment-candidate:focus-visible {
+  outline: 3px solid #168179;
+  outline-offset: -3px;
+}
+.assessment-candidate:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
 .table-row:last-child {
   border-bottom: 0;
 }
@@ -537,6 +554,16 @@ input:focus-visible {
 .regional-grid strong {
   font-family: var(--font-dm-mono), monospace;
   color: #245e60;
+}
+.assessment-grid div {
+  align-items: flex-start;
+  flex-direction: column;
+}
+.assessment-grid strong {
+  font-family: inherit;
+  font-size: 0.86rem;
+  text-align: left;
+  white-space: normal;
 }
 .hint-line {
   font-size: 0.86rem;
