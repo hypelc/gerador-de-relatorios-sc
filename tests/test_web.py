@@ -40,6 +40,175 @@ def assessment_workbook() -> bytes:
     return output.getvalue()
 
 
+def multi_sheet_assessment_workbook(
+    *,
+    base_rows: list[tuple[object, ...]] | None = None,
+    summary_rows: list[tuple[object, ...]] | None = None,
+    additional_base_sheets: list[tuple[str, list[tuple[object, ...]]]] | None = None,
+    include_invalid_auxiliary: bool = False,
+    header_offset: int = 0,
+    summary_headers: tuple[object, ...] = ("Avaliação", "Acertos", "Erros", "Percentual"),
+) -> bytes:
+    base_rows = base_rows or [
+        (101, "A", 1, 21, 3),
+        (102, "A", 2, 24, 0),
+        (103, "A", 3, 20, 4),
+        (104, "A", 4, 18, 6),
+        (105, "A", 5, 23, 1),
+        (106, "A", 6, 19, 5),
+        (107, "A", 7, 22, 2),
+        (None, None, None, None, None),
+        (201, "B", 1, 13, 2),
+        (202, "B", 2, 15, 0),
+        (203, "B", 3, 12, 3),
+        (204, "B", 4, 14, 1),
+        (205, "B", 5, 9, 6),
+        (206, "B", 6, 15, 0),
+        (207, "B", 7, 11, 4),
+        (208, "B", 8, 14, 1),
+    ]
+    summary_rows = summary_rows or [
+        ("Prova A", 147, 21, 0.875),
+        ("Prova B", 103, 17, 0.8583333333333333),
+    ]
+    workbook = openpyxl.Workbook()
+    workbook.remove(workbook.active)
+    if include_invalid_auxiliary:
+        auxiliary = workbook.create_sheet("Auxiliar")
+        auxiliary.append(["Questão", "Acertos", "Erros"])
+        auxiliary.append(["não é uma questão", "inválido", 0])
+
+    def add_base_sheet(name: str, rows: list[tuple[object, ...]], offset: int = 0) -> None:
+        sheet = workbook.create_sheet(name)
+        for row_index in range(offset):
+            sheet.append(["Dados da avaliação"] if row_index == 0 else [])
+        sheet.append(["ID", "Prova", "Pergunta", "Corretas", "Incorretas"])
+        for row in rows:
+            sheet.append(row)
+
+    add_base_sheet("Base", base_rows, header_offset)
+    for name, rows in additional_base_sheets or []:
+        add_base_sheet(name, rows)
+
+    summary = workbook.create_sheet("Resumo")
+    summary.append(["Resumo geral das provas"])
+    summary.append(summary_headers)
+    for row in summary_rows:
+        summary.append(row)
+    summary.append(["Observação", "Valor", "Tipo"])
+    summary.append(["Meta", "85%", "texto"])
+    summary.append(["Limite mínimo", 0.7, "decimal"])
+    summary.append(["Participantes", 24, "número"])
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def traditional_assessment_workbook(
+    *,
+    response_mismatch_question: int | None = None,
+    duplicate_question: bool = False,
+    zero_denominator_question: int | None = None,
+    divergent_total: bool = False,
+    include_response_count: bool = True,
+) -> bytes:
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Avaliacoes"
+    sheet.append(["Avaliação diagnóstica"])
+    sheet.append([])
+    headers = ["Questão", "Acertos", "Erros", "% Acerto", "% Erro"]
+    if include_response_count:
+        headers.insert(1, "Respostas")
+    sheet.append(headers)
+    correct_counts = [20, 19, 19, *([17] * 9)]
+    for question_number, correct in enumerate(correct_counts, start=1):
+        number = 1 if duplicate_question and question_number == 2 else question_number
+        incorrect = 20 - correct
+        responses = 20
+        if question_number == response_mismatch_question:
+            responses -= 1
+        if question_number == zero_denominator_question:
+            correct, incorrect, responses = 0, 0, 0
+        row_number = sheet.max_row + 1
+        correct_column = 3 if include_response_count else 2
+        incorrect_column = correct_column + 1
+        denominator = f"{chr(64 + correct_column)}{row_number}+{chr(64 + incorrect_column)}{row_number}"
+        values = [
+            number,
+            correct,
+            incorrect,
+            f"={chr(64 + correct_column)}{row_number}/({denominator})",
+            f"={chr(64 + incorrect_column)}{row_number}/({denominator})",
+        ]
+        if include_response_count:
+            values.insert(1, responses)
+        sheet.append(values)
+        sheet.cell(row_number, correct_column + 2).number_format = "0.00%"
+        sheet.cell(row_number, correct_column + 3).number_format = "0.00%"
+    total_correct, total_incorrect = (212, 28) if divergent_total else (211, 29)
+    total_values = ["TOTAL", total_correct, total_incorrect, None, None]
+    if include_response_count:
+        total_values.insert(1, 240)
+    sheet.append(total_values)
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def assessment_workbook_with_sheets(
+    sheets: list[tuple[str, bytes]],
+) -> bytes:
+    workbook = openpyxl.Workbook()
+    workbook.remove(workbook.active)
+    for title, content in sheets:
+        source_workbook = openpyxl.load_workbook(io.BytesIO(content))
+        target_sheet = workbook.create_sheet(title)
+        for row in source_workbook.active.iter_rows(values_only=True):
+            target_sheet.append(row)
+        source_workbook.close()
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def assessment_workbook_with_candidate_blocks(
+    blocks: list[list[list[object]]],
+) -> bytes:
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Comparativo"
+    for block in blocks:
+        for row in block:
+            sheet.append(row)
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def invalid_assessment_candidate_workbook() -> bytes:
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.append(["Questão", "Acertos", "Erros"])
+    sheet.append(["não é uma questão", "inválido", 0])
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def invalid_assessment_candidate_with_multiple_headers_workbook() -> bytes:
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    headers = ["Questão", "Acertos", "Erros"]
+    sheet.append(headers)
+    sheet.append(["não é uma questão", "inválido", 0])
+    sheet.append(headers)
+    sheet.append(["também não é uma questão", "inválido", 0])
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
 def test_assessment_inspection_and_pdf_keep_evaluations_separate() -> None:
     web = client()
     content = assessment_workbook()
@@ -60,6 +229,720 @@ def test_assessment_inspection_and_pdf_keep_evaluations_separate() -> None:
     assert generated.status_code == 200
     assert generated.headers["content-type"] == "application/pdf"
     assert len(PdfReader(io.BytesIO(generated.content)).pages) == 4
+
+
+def test_multisheet_assessment_uses_base_and_checks_summary_in_pdf() -> None:
+    web = client()
+    content = multi_sheet_assessment_workbook(header_offset=2)
+
+    inspected = web.post("/api/inspect", files={"file": ("multiplas_provas.xlsx", content)})
+
+    assert inspected.status_code == 200, inspected.text
+    data = inspected.json()
+    assert data["kind"] == "assessment"
+    assert data["sheet"] == "Base"
+    assert [item["name"] for item in data["evaluations"]] == ["Prova A", "Prova B"]
+    assert [item["question_count"] for item in data["evaluations"]] == [7, 8]
+    assert [item["response_counts"] for item in data["evaluations"]] == [[24], [15]]
+    assert [(item["correct"], item["incorrect"], item["rate"]) for item in data["evaluations"]] == [
+        (147, 21, 87.5),
+        (103, 17, 85.83),
+    ]
+    assert data["evaluations"][0]["questions"][0]["number"] == 1
+    assert data["evaluations"][0]["questions"][0]["number"] != 101
+    assert data["evaluations"][0]["questions"][1]["incorrect"] == 0
+    assert data["evaluations"][1]["questions"][-1]["number"] == 8
+    assert all(item["name"] != "Resumo" for item in data["evaluations"])
+
+    generated = web.post(
+        "/api/generate",
+        files={"file": ("multiplas_provas.xlsx", content)},
+        data={
+            "options": json.dumps(
+                {
+                    "kind": "assessment",
+                    "model": "avaliacao_questoes",
+                    "title": "Resultados por prova",
+                }
+            )
+        },
+    )
+
+    assert generated.status_code == 200, generated.text
+    pages = PdfReader(io.BytesIO(generated.content)).pages
+    pdf_text = "\n".join(page.extract_text() or "" for page in pages)
+    assert "Prova A" in pdf_text
+    assert "Prova B" in pdf_text
+    assert "87,50%" in pdf_text
+    assert "85,83%" in pdf_text
+    assert "147 acertos" in pdf_text and "21 erros" in pdf_text
+    assert "103 acertos" in pdf_text and "17 erros" in pdf_text
+    assert "15 respostas por questão" in pdf_text
+    assert "Participantes" not in pdf_text
+
+
+def test_multisheet_summary_divergence_warns_but_base_remains_authoritative() -> None:
+    content = multi_sheet_assessment_workbook(
+        summary_rows=[("Prova A", 147, 21, 0.875), ("Prova B", 104, 16, 0.8667)]
+    )
+    web = client()
+
+    inspected = web.post(
+        "/api/inspect", files={"file": ("resumo_divergente.xlsx", content)}
+    )
+
+    assert inspected.status_code == 200, inspected.text
+    data = inspected.json()
+    prova_b = data["evaluations"][1]
+    assert (prova_b["correct"], prova_b["incorrect"], prova_b["rate"]) == (103, 17, 85.83)
+    warning = " ".join(data["warnings"])
+    assert "Resumo" in warning
+    assert "104 acertos e 16 erros" in warning
+    assert "103 acertos e 17 erros" in warning
+    assert "dados detalhados da Base" in warning
+
+    generated = web.post(
+        "/api/generate",
+        files={"file": ("resumo_divergente.xlsx", content)},
+        data={
+            "options": json.dumps(
+                {
+                    "kind": "assessment",
+                    "model": "avaliacao_questoes",
+                    "title": "Resumo conferido",
+                }
+            )
+        },
+    )
+    assert generated.status_code == 200, generated.text
+    pdf_text = "\n".join(
+        page.extract_text() or "" for page in PdfReader(io.BytesIO(generated.content)).pages
+    )
+    assert "104 acertos e 16 erros" in pdf_text
+    assert "103 acertos e 17 erros" in pdf_text
+    assert "dados detalhados da Base" in pdf_text
+
+
+def test_multisheet_summary_count_aliases_are_checked_and_reported_in_pdf() -> None:
+    content = multi_sheet_assessment_workbook(
+        summary_headers=("Avaliação", "Corretas", "Incorretas", "Percentual"),
+        summary_rows=[("Prova A", 147, 21, 0.875), ("Prova B", 104, 16, 0.8667)],
+    )
+    web = client()
+
+    inspected = web.post(
+        "/api/inspect", files={"file": ("resumo_aliases.xlsx", content)}
+    )
+
+    assert inspected.status_code == 200, inspected.text
+    data = inspected.json()
+    assert (data["evaluations"][1]["correct"], data["evaluations"][1]["incorrect"]) == (
+        103,
+        17,
+    )
+    warning = " ".join(data["warnings"])
+    assert "104 acertos e 16 erros" in warning
+    assert "103 acertos e 17 erros" in warning
+    assert "dados detalhados da Base" in warning
+
+    generated = web.post(
+        "/api/generate",
+        files={"file": ("resumo_aliases.xlsx", content)},
+        data={
+            "options": json.dumps(
+                {
+                    "kind": "assessment",
+                    "model": "avaliacao_questoes",
+                    "title": "Resumo com aliases",
+                }
+            )
+        },
+    )
+    assert generated.status_code == 200, generated.text
+    pdf_text = "\n".join(
+        page.extract_text() or "" for page in PdfReader(io.BytesIO(generated.content)).pages
+    )
+    assert "104 acertos e 16 erros" in pdf_text
+    assert "103 acertos e 17 erros" in pdf_text
+
+
+def test_multisheet_summary_missing_base_evaluation_warns_in_inspection_and_pdf() -> None:
+    content = multi_sheet_assessment_workbook(
+        summary_rows=[("Prova A", 147, 21, 0.875)]
+    )
+    web = client()
+
+    inspected = web.post(
+        "/api/inspect", files={"file": ("resumo_sem_prova_b.xlsx", content)}
+    )
+
+    assert inspected.status_code == 200, inspected.text
+    data = inspected.json()
+    assert [item["name"] for item in data["evaluations"]] == ["Prova A", "Prova B"]
+    warning = " ".join(data["warnings"])
+    assert "Prova B" in warning
+    assert "não encontrada no Resumo" in warning
+    assert "dados detalhados da Base" in warning
+
+    generated = web.post(
+        "/api/generate",
+        files={"file": ("resumo_sem_prova_b.xlsx", content)},
+        data={
+            "options": json.dumps(
+                {
+                    "kind": "assessment",
+                    "model": "avaliacao_questoes",
+                    "title": "Resumo incompleto",
+                }
+            )
+        },
+    )
+    assert generated.status_code == 200, generated.text
+    pdf_text = "\n".join(
+        page.extract_text() or "" for page in PdfReader(io.BytesIO(generated.content)).pages
+    )
+    assert "Prova B" in pdf_text
+    assert "não encontrada no Resumo" in pdf_text
+
+
+def test_multisheet_summary_warnings_beyond_first_page_remain_in_pdf() -> None:
+    evaluation_names = "ABCDEFGHIJKLMNOPQRSTUVWXY"
+    base_rows = [
+        (index + 1, name, 1, index + 1, 1)
+        for index, name in enumerate(evaluation_names)
+    ]
+    content = multi_sheet_assessment_workbook(
+        base_rows=base_rows,
+        summary_rows=[("Prova A", 1, 1, 0.5)],
+    )
+    web = client()
+
+    inspected = web.post(
+        "/api/inspect", files={"file": ("muitos_avisos_resumo.xlsx", content)}
+    )
+
+    assert inspected.status_code == 200, inspected.text
+    warnings = " ".join(inspected.json()["warnings"])
+    assert len(inspected.json()["warnings"]) > 24
+    assert "Prova Y não encontrada no Resumo" in warnings
+
+    generated = web.post(
+        "/api/generate",
+        files={"file": ("muitos_avisos_resumo.xlsx", content)},
+        data={
+            "options": json.dumps(
+                {
+                    "kind": "assessment",
+                    "model": "avaliacao_questoes",
+                    "title": "Resumo com muitos avisos",
+                }
+            )
+        },
+    )
+    assert generated.status_code == 200, generated.text
+    pdf_text = "\n".join(
+        page.extract_text() or "" for page in PdfReader(io.BytesIO(generated.content)).pages
+    )
+    assert "Prova Y não encontrada no Resumo" in pdf_text
+
+
+def test_multisheet_assessment_ignores_invalid_auxiliary_candidate_with_warning() -> None:
+    content = multi_sheet_assessment_workbook(include_invalid_auxiliary=True)
+    web = client()
+
+    inspected = web.post(
+        "/api/inspect", files={"file": ("auxiliar_invalida.xlsx", content)}
+    )
+
+    assert inspected.status_code == 200, inspected.text
+    data = inspected.json()
+    assert data["sheet"] == "Base"
+    assert [item["name"] for item in data["evaluations"]] == ["Prova A", "Prova B"]
+    assert any("Aba Auxiliar" in warning and "candidata inválida" in warning for warning in data["warnings"])
+
+    generated = web.post(
+        "/api/generate",
+        files={"file": ("auxiliar_invalida.xlsx", content)},
+        data={
+            "options": json.dumps(
+                {
+                    "kind": "assessment",
+                    "model": "avaliacao_questoes",
+                    "title": "Dados válidos",
+                }
+            )
+        },
+    )
+    assert generated.status_code == 200, generated.text
+    pdf_text = "\n".join(
+        page.extract_text() or "" for page in PdfReader(io.BytesIO(generated.content)).pages
+    )
+    assert "Aba Auxiliar" in pdf_text
+    assert "candidata inválida" in pdf_text
+
+
+def test_multisheet_assessment_rejects_two_valid_detail_sheets() -> None:
+    alternate_rows = [(901, "C", 1, 8, 2), (902, "C", 2, 7, 3)]
+    content = multi_sheet_assessment_workbook(
+        additional_base_sheets=[("OutraBase", alternate_rows)]
+    )
+    web = client()
+
+    inspected = web.post(
+        "/api/inspect", files={"file": ("duas_bases.xlsx", content)}
+    )
+
+    assert inspected.status_code == 200, inspected.text
+    choices = inspected.json()
+    assert choices["kind"] == "assessment_choices"
+    assert "selecione" in choices["message"].lower()
+    assert [candidate["sheet"] for candidate in choices["candidates"]] == [
+        "Base",
+        "OutraBase",
+    ]
+    alternate = choices["candidates"][1]
+    assert alternate["evaluations"][0]["name"] == "Prova C"
+
+    selected = web.post(
+        "/api/inspect",
+        files={"file": ("duas_bases.xlsx", content)},
+        data={"candidate_id": alternate["id"]},
+    )
+    assert selected.status_code == 200, selected.text
+    selected_data = selected.json()
+    assert selected_data["kind"] == "assessment"
+    assert selected_data["sheet"] == "OutraBase"
+    assert selected_data["candidate_id"] == alternate["id"]
+    assert selected_data["evaluations"][0]["correct"] == 15
+
+    generated = web.post(
+        "/api/generate",
+        files={"file": ("duas_bases.xlsx", content)},
+        data={
+            "options": json.dumps(
+                {
+                    "kind": "assessment",
+                    "model": "avaliacao_questoes",
+                    "candidate_id": alternate["id"],
+                    "title": "Escolha confirmada",
+                }
+            )
+        },
+    )
+    assert generated.status_code == 200, generated.text
+    pdf_text = "\n".join(
+        page.extract_text() or "" for page in PdfReader(io.BytesIO(generated.content)).pages
+    )
+    assert "Prova C" in pdf_text
+    assert "15 acertos" in pdf_text
+
+    different_file = multi_sheet_assessment_workbook(
+        base_rows=[(301, "D", 1, 1, 1)]
+    )
+    mismatched_selection = web.post(
+        "/api/inspect",
+        files={"file": ("outra_planilha.xlsx", different_file)},
+        data={"candidate_id": alternate["id"]},
+    )
+    assert mismatched_selection.status_code == 422
+    assert "não corresponde" in mismatched_selection.json()["detail"].lower()
+
+    stale_generation = web.post(
+        "/api/generate",
+        files={"file": ("outra_planilha.xlsx", different_file)},
+        data={
+            "options": json.dumps(
+                {
+                    "kind": "assessment",
+                    "model": "avaliacao_questoes",
+                    "candidate_id": alternate["id"],
+                    "title": "Seleção antiga",
+                }
+            )
+        },
+    )
+    assert stale_generation.status_code == 422
+    assert "não corresponde" in stale_generation.json()["detail"].lower()
+
+
+@pytest.mark.parametrize(
+    ("base_rows", "expected_detail"),
+    [
+        (
+            [(101, "A", 1, 5, 0), (102, "A", 1, 4, 1)],
+            "pergunta 1 duplicada",
+        ),
+        ([(101, "A", 1, 1.5, 0)], "inteiro não negativo"),
+        ([(101, "A", 1, None, 1)], "inteiro não negativo"),
+        ([(101, "A", 1, -1, 2)], "inteiro não negativo"),
+        ([(101, "A", 1, 0, 0)], "pergunta sem respostas"),
+    ],
+)
+def test_multisheet_assessment_rejects_invalid_detail_rows(
+    base_rows: list[tuple[object, ...]], expected_detail: str
+) -> None:
+    content = multi_sheet_assessment_workbook(base_rows=base_rows)
+    response = client().post(
+        "/api/inspect", files={"file": ("base_invalida.xlsx", content)}
+    )
+
+    assert response.status_code == 422
+    assert expected_detail in response.json()["detail"].lower()
+
+
+def test_assessment_skips_invalid_auxiliary_sheet_and_reports_it() -> None:
+    content = assessment_workbook_with_sheets(
+        [
+            ("Auxiliar", invalid_assessment_candidate_workbook()),
+            ("Avaliacoes", traditional_assessment_workbook()),
+        ]
+    )
+    web = client()
+
+    inspected = web.post("/api/inspect", files={"file": ("multiplas_abas.xlsx", content)})
+
+    assert inspected.status_code == 200, inspected.text
+    data = inspected.json()
+    assert data["sheet"] == "Avaliacoes"
+    assert data["evaluations"][0]["correct"] == 211
+    assert data["evaluations"][0]["incorrect"] == 29
+    assert any(
+        "Aba Auxiliar" in warning
+        and "linha 2" in warning.lower()
+        and "ignorada" in warning.lower()
+        for warning in data["warnings"]
+    )
+
+    generated = web.post(
+        "/api/generate",
+        files={"file": ("multiplas_abas.xlsx", content)},
+        data={
+            "options": json.dumps(
+                {
+                    "kind": "assessment",
+                    "model": "avaliacao_questoes",
+                    "title": "Resultados da avaliação",
+                }
+            )
+        },
+    )
+    assert generated.status_code == 200, generated.text
+    pdf_text = "\n".join(
+        page.extract_text() or "" for page in PdfReader(io.BytesIO(generated.content)).pages
+    )
+    assert "Aba Auxiliar" in pdf_text
+    assert "ignorada" in pdf_text.lower()
+
+
+def test_assessment_skips_multiple_invalid_headers_before_valid_candidate() -> None:
+    content = assessment_workbook_with_sheets(
+        [
+            ("Auxiliar", invalid_assessment_candidate_with_multiple_headers_workbook()),
+            ("Avaliacoes", traditional_assessment_workbook()),
+        ]
+    )
+    web = client()
+
+    inspected = web.post(
+        "/api/inspect",
+        files={"file": ("multiplas_candidatas_invalidas.xlsx", content)},
+    )
+
+    assert inspected.status_code == 200, inspected.text
+    data = inspected.json()
+    assert data["sheet"] == "Avaliacoes"
+    assert data["evaluations"][0]["question_count"] == 12
+    assert data["evaluations"][0]["correct"] == 211
+    auxiliary_warnings = [
+        warning for warning in data["warnings"] if "Aba Auxiliar" in warning
+    ]
+    assert len(auxiliary_warnings) == 2
+    assert any(
+        "cabeçalho linha 1" in warning and "linha 2" in warning
+        for warning in auxiliary_warnings
+    )
+    assert any(
+        "cabeçalho linha 3" in warning and "linha 4" in warning
+        for warning in auxiliary_warnings
+    )
+
+    generated = web.post(
+        "/api/generate",
+        files={"file": ("multiplas_candidatas_invalidas.xlsx", content)},
+        data={
+            "options": json.dumps(
+                {
+                    "kind": "assessment",
+                    "model": "avaliacao_questoes",
+                    "title": "Resultados da avaliação",
+                }
+            )
+        },
+    )
+    assert generated.status_code == 200, generated.text
+    pdf_text = "\n".join(
+        page.extract_text() or "" for page in PdfReader(io.BytesIO(generated.content)).pages
+    )
+    assert "Aba Auxiliar" in pdf_text
+    assert "cabeçalho linha 1" in pdf_text
+    assert "cabeçalho linha 3" in pdf_text
+
+
+def test_assessment_rejects_multiple_valid_sheets_as_ambiguous() -> None:
+    content = assessment_workbook_with_sheets(
+        [
+            ("Avaliacao A", traditional_assessment_workbook()),
+            ("Avaliacao B", assessment_workbook()),
+        ]
+    )
+    web = client()
+
+    inspected = web.post("/api/inspect", files={"file": ("duas_avaliacoes.xlsx", content)})
+
+    assert inspected.status_code == 422
+    detail = inspected.json()["detail"]
+    assert "ambígua" in detail.lower()
+    assert "Avaliacao A" in detail
+    assert "Avaliacao B" in detail
+
+    generated = web.post(
+        "/api/generate",
+        files={"file": ("duas_avaliacoes.xlsx", content)},
+        data={
+            "options": json.dumps(
+                {
+                    "kind": "assessment",
+                    "model": "avaliacao_questoes",
+                    "title": "Resultados da avaliação",
+                }
+            )
+        },
+    )
+    assert generated.status_code == 422
+    assert "ambígua" in generated.json()["detail"].lower()
+
+
+def test_assessment_rejects_multiple_valid_blocks_in_one_sheet_as_ambiguous() -> None:
+    headers = ["Questão", "Acertos", "Erros"]
+    content = assessment_workbook_with_candidate_blocks(
+        [[headers, [1, 6, 4]], [headers, [1, 8, 2]]]
+    )
+    web = client()
+
+    inspected = web.post(
+        "/api/inspect", files={"file": ("dois_blocos_validos.xlsx", content)}
+    )
+
+    assert inspected.status_code == 422
+    detail = inspected.json()["detail"]
+    assert "ambígua" in detail.lower()
+    assert "Comparativo" in detail
+    assert "cabeçalho na linha 1" in detail
+    assert "cabeçalho na linha 3" in detail
+
+    generated = web.post(
+        "/api/generate",
+        files={"file": ("dois_blocos_validos.xlsx", content)},
+        data={
+            "options": json.dumps(
+                {
+                    "kind": "assessment",
+                    "model": "avaliacao_questoes",
+                    "title": "Resultados da avaliação",
+                }
+            )
+        },
+    )
+    assert generated.status_code == 422
+    assert "ambígua" in generated.json()["detail"].lower()
+
+
+def test_assessment_uses_valid_block_and_warns_about_invalid_block() -> None:
+    headers = ["Questão", "Acertos", "Erros"]
+    content = assessment_workbook_with_candidate_blocks(
+        [[headers, [1, 6, 4]], [headers, ["inválida", "inválido", 0]]]
+    )
+    web = client()
+
+    inspected = web.post(
+        "/api/inspect", files={"file": ("bloco_valido_e_invalido.xlsx", content)}
+    )
+
+    assert inspected.status_code == 200, inspected.text
+    data = inspected.json()
+    assert data["sheet"] == "Comparativo"
+    assert len(data["evaluations"]) == 1
+    assert data["evaluations"][0]["question_count"] == 1
+    assert data["evaluations"][0]["correct"] == 6
+    assert data["evaluations"][0]["incorrect"] == 4
+    assert len(data["warnings"]) == 1
+    warning = data["warnings"][0]
+    assert "cabeçalho linha 3" in warning
+    assert "candidata inválida" in warning
+    assert "linha 4" in warning
+
+    generated = web.post(
+        "/api/generate",
+        files={"file": ("bloco_valido_e_invalido.xlsx", content)},
+        data={
+            "options": json.dumps(
+                {
+                    "kind": "assessment",
+                    "model": "avaliacao_questoes",
+                    "title": "Resultados da avaliação",
+                }
+            )
+        },
+    )
+    assert generated.status_code == 200, generated.text
+    pdf_text = "\n".join(
+        page.extract_text() or "" for page in PdfReader(io.BytesIO(generated.content)).pages
+    )
+    assert "cabeçalho linha 3" in pdf_text
+    assert "candidata inválida" in pdf_text
+
+
+def test_traditional_single_assessment_inspection_and_pdf() -> None:
+    web = client()
+    content = traditional_assessment_workbook()
+    inspected = web.post(
+        "/api/inspect", files={"file": ("entrada_tradicional.xlsx", content)}
+    )
+
+    assert inspected.status_code == 200, inspected.text
+    data = inspected.json()
+    assert data["kind"] == "assessment"
+    assert data["sheet"] == "Avaliacoes"
+    assert data["suggested_title"] == "Resultados das avaliações por questão"
+    assert len(data["evaluations"]) == 1
+    evaluation = data["evaluations"][0]
+    assert evaluation["name"] == "Avaliação única"
+    assert evaluation["question_count"] == 12
+    assert evaluation["response_counts"] == [20]
+    assert evaluation["correct"] == 211
+    assert evaluation["incorrect"] == 29
+    assert evaluation["total_responses"] == 240
+    assert evaluation["rate"] == 87.92
+    assert evaluation["questions"][0] == {
+        "number": 1,
+        "correct": 20,
+        "incorrect": 0,
+        "responses": 20,
+        "rate": 100.0,
+    }
+    assert data["warnings"] == []
+
+    generated = web.post(
+        "/api/generate",
+        files={"file": ("entrada_tradicional.xlsx", content)},
+        data={
+            "options": json.dumps(
+                {
+                    "kind": "assessment",
+                    "model": "avaliacao_questoes",
+                    "title": "Resultados da avaliação",
+                }
+            )
+        },
+    )
+    assert generated.status_code == 200, generated.text
+    assert generated.headers["content-type"] == "application/pdf"
+    reader = PdfReader(io.BytesIO(generated.content))
+    assert len(reader.pages) == 2
+    pdf_text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    assert "Avaliação única" in pdf_text
+    assert "12 questões" in pdf_text
+    assert "211 acertos" in pdf_text
+    assert "29 erros" in pdf_text
+    assert "240 respostas no total" in pdf_text
+    assert "20 respostas por questão" in pdf_text
+    assert "87,92%" in pdf_text
+
+
+@pytest.mark.parametrize(
+    ("workbook_options", "expected_detail"),
+    [
+        ({"response_mismatch_question": 3}, "linha 6: respostas (19)"),
+        ({"duplicate_question": True}, "linha 5: questão 1 duplicada"),
+        ({"zero_denominator_question": 4}, "linha 7: questão sem respostas"),
+    ],
+)
+def test_traditional_assessment_rejects_invalid_detail_rows(
+    workbook_options: dict[str, object], expected_detail: str
+) -> None:
+    response = client().post(
+        "/api/inspect",
+        files={
+            "file": (
+                "entrada_invalida.xlsx",
+                traditional_assessment_workbook(**workbook_options),
+            )
+        },
+    )
+
+    assert response.status_code == 422
+    assert expected_detail in response.json()["detail"].lower()
+
+
+def test_traditional_assessment_summary_divergence_is_visible_in_pdf() -> None:
+    web = client()
+    content = traditional_assessment_workbook(divergent_total=True)
+    inspected = web.post(
+        "/api/inspect", files={"file": ("total_divergente.xlsx", content)}
+    )
+
+    assert inspected.status_code == 200, inspected.text
+    data = inspected.json()
+    assert data["evaluations"][0]["correct"] == 211
+    assert data["evaluations"][0]["incorrect"] == 29
+    assert any(
+        "Linha 16" in warning
+        and "212 acertos e 28 erros" in warning
+        and "211 acertos e 29 erros" in warning
+        and "usa a soma das questões" in warning
+        for warning in data["warnings"]
+    )
+
+    generated = web.post(
+        "/api/generate",
+        files={"file": ("total_divergente.xlsx", content)},
+        data={
+            "options": json.dumps(
+                {
+                    "kind": "assessment",
+                    "model": "avaliacao_questoes",
+                    "title": "Resultados da avaliação",
+                }
+            )
+        },
+    )
+    assert generated.status_code == 200, generated.text
+    reader = PdfReader(io.BytesIO(generated.content))
+    assert len(reader.pages) == 3
+    pdf_text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    assert "212 acertos e 28 erros" in pdf_text
+    assert "211 acertos e 29 erros" in pdf_text
+    assert "usa a soma das questões" in pdf_text
+
+
+def test_traditional_assessment_allows_missing_response_column() -> None:
+    response = client().post(
+        "/api/inspect",
+        files={
+            "file": (
+                "sem_respostas.xlsx",
+                traditional_assessment_workbook(include_response_count=False),
+            )
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    evaluation = response.json()["evaluations"][0]
+    assert evaluation["name"] == "Avaliação única"
+    assert evaluation["correct"] == 211
+    assert evaluation["incorrect"] == 29
+    assert evaluation["questions"][0]["incorrect"] == 0
+    assert response.json()["warnings"] == []
 
 
 def test_assessment_rejects_invalid_question_count() -> None:
