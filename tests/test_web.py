@@ -186,6 +186,77 @@ def assessment_workbook_with_candidate_blocks(
     return output.getvalue()
 
 
+def side_by_side_assessment_workbook(
+    *,
+    left_questions: list[tuple[object, ...]] | None = None,
+    right_questions: list[tuple[object, ...]] | None = None,
+    left_summary: tuple[object, ...] = ("Resumo", 21, 139, 160),
+    right_summary: tuple[object, ...] = ("TOTAL", 108, 95, 13),
+    summary_rates: tuple[object, object] = (0.86875, 0.8796296296296297),
+    right_header: tuple[object, ...] = ("ITEM", "TOTAL", "ACERTOS", "ERROS"),
+    separator_column: bool = True,
+    separator_value: object | None = None,
+) -> bytes:
+    if left_questions is None:
+        left_questions = [
+            ("Q1", 2, 14, 16),
+            ("Q2", 1, 15, 16),
+            ("Q3", 3, 13, 16),
+            ("Q4", 0, 16, 16),
+            ("Q5", 4, 12, 16),
+            ("Q6", 1, 15, 16),
+            ("Q7", 5, 11, 16),
+            ("Q8", 0, 16, 16),
+            ("Q9", 2, 14, 16),
+            ("Q10", 3, 13, 16),
+        ]
+    if right_questions is None:
+        right_questions = [
+            ("Questão 1", 12, 10, 2),
+            ("Questão 2", 12, 12, 0),
+            ("Questão 3", 12, 11, 1),
+            ("Questão 4", 12, 9, 3),
+            ("Questão 5", 12, 12, 0),
+            ("Questão 6", 12, 8, 4),
+            ("Questão 7", 12, 11, 1),
+            ("Questão 8", 12, 12, 0),
+            ("Questão 9", 12, 10, 2),
+        ]
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Comparativo"
+    sheet.append([])
+    sheet.append([None, "DADOS FICTÍCIOS — COMPARATIVO"])
+    sheet.append([])
+    header = [None, "ITEM", "ERROS", "ACERTOS", "TOTAL"]
+    if separator_column:
+        header.append(None)
+    sheet.append([*header, *right_header])
+
+    def append_blocks(
+        left: tuple[object, ...] = (),
+        right: tuple[object, ...] = (),
+        separator: object | None = None,
+    ) -> None:
+        sheet.append(
+            [None, *(left or (None,) * 4), separator, *(right or (None,) * 4)]
+        )
+
+    for index in range(max(len(left_questions), len(right_questions))):
+        left = left_questions[index] if index < len(left_questions) else ()
+        right = right_questions[index] if index < len(right_questions) else ()
+        append_blocks(left, right, separator_value if index == 0 else None)
+    append_blocks()
+    append_blocks((), right_summary)
+    append_blocks(left_summary)
+    append_blocks(("Indicador", "Valor"))
+    append_blocks(("Taxa de acerto A", summary_rates[0]))
+    append_blocks(("Taxa de acerto B", summary_rates[1]))
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
 def invalid_assessment_candidate_workbook() -> bytes:
     workbook = openpyxl.Workbook()
     sheet = workbook.active
@@ -563,6 +634,190 @@ def test_multisheet_assessment_rejects_two_valid_detail_sheets() -> None:
     )
     assert stale_generation.status_code == 422
     assert "não corresponde" in stale_generation.json()["detail"].lower()
+
+
+def test_side_by_side_assessment_inspection_and_pdf_keep_blocks_separate() -> None:
+    web = client()
+    content = side_by_side_assessment_workbook()
+
+    inspected = web.post(
+        "/api/inspect", files={"file": ("comparativo.xlsx", content)}
+    )
+
+    assert inspected.status_code == 200, inspected.text
+    data = inspected.json()
+    assert data["kind"] == "assessment"
+    assert data["sheet"] == "Comparativo"
+    assert [item["name"] for item in data["evaluations"]] == [
+        "Bloco esquerdo",
+        "Bloco direito",
+    ]
+    left, right = data["evaluations"]
+    assert (left["question_count"], left["correct"], left["incorrect"]) == (
+        10,
+        139,
+        21,
+    )
+    assert (left["response_counts"], left["total_responses"], left["rate"]) == (
+        [16],
+        160,
+        86.88,
+    )
+    assert (right["question_count"], right["correct"], right["incorrect"]) == (
+        9,
+        95,
+        13,
+    )
+    assert (right["response_counts"], right["total_responses"], right["rate"]) == (
+        [12],
+        108,
+        87.96,
+    )
+    assert left["questions"][0]["number"] == right["questions"][0]["number"] == 1
+    assert any(
+        "números iguais não comprovam" in warning.lower()
+        for warning in data["warnings"]
+    )
+    assert not any("diverge" in warning.lower() for warning in data["warnings"])
+
+    generated = web.post(
+        "/api/generate",
+        files={"file": ("comparativo.xlsx", content)},
+        data={
+            "options": json.dumps(
+                {
+                    "kind": "assessment",
+                    "model": "avaliacao_questoes",
+                    "title": "Comparativo descritivo",
+                }
+            )
+        },
+    )
+    assert generated.status_code == 200, generated.text
+    pages = PdfReader(io.BytesIO(generated.content)).pages
+    assert len(pages) == 4
+    pdf_text = "\n".join(page.extract_text() or "" for page in pages)
+    assert "Bloco esquerdo" in pdf_text and "Bloco direito" in pdf_text
+    assert "139 acertos" in pdf_text and "21 erros" in pdf_text
+    assert "95 acertos" in pdf_text and "13 erros" in pdf_text
+    assert "86,88%" in pdf_text and "87,96%" in pdf_text
+    assert "16 respostas por questão" in pdf_text
+    assert "12 respostas por questão" in pdf_text
+
+
+def test_side_by_side_totals_and_reported_rates_warn_without_replacing_details() -> None:
+    content = side_by_side_assessment_workbook(
+        left_summary=("Resumo", 22, 138, 160),
+        right_summary=("TOTAL", 108, 94, 14),
+        summary_rates=(0.5, 0.5),
+    )
+    web = client()
+
+    inspected = web.post(
+        "/api/inspect", files={"file": ("resumos_divergentes.xlsx", content)}
+    )
+
+    assert inspected.status_code == 200, inspected.text
+    data = inspected.json()
+    left, right = data["evaluations"]
+    assert (left["correct"], left["incorrect"], left["rate"]) == (139, 21, 86.88)
+    assert (right["correct"], right["incorrect"], right["rate"]) == (95, 13, 87.96)
+    warning = " ".join(data["warnings"])
+    assert "Resumo do Bloco esquerdo informa 138 acertos, 22 erros" in warning
+    assert "139 acertos, 21 erros e 160 respostas" in warning
+    assert "TOTAL do Bloco direito informa 94 acertos, 14 erros" in warning
+    assert "Taxa de acerto A informa 50,00%" in warning
+    assert "Taxa de acerto B informa 50,00%" in warning
+    assert "O relatório usa as questões detalhadas" in warning
+
+    generated = web.post(
+        "/api/generate",
+        files={"file": ("resumos_divergentes.xlsx", content)},
+        data={
+            "options": json.dumps(
+                {
+                    "kind": "assessment",
+                    "model": "avaliacao_questoes",
+                    "title": "Controles conferidos",
+                }
+            )
+        },
+    )
+    assert generated.status_code == 200, generated.text
+    pdf_text = "\n".join(
+        page.extract_text() or "" for page in PdfReader(io.BytesIO(generated.content)).pages
+    )
+    assert "Resumo do Bloco esquerdo informa 138 acertos, 22 erros" in pdf_text
+    assert "TOTAL do Bloco direito informa 94 acertos, 14 erros" in pdf_text
+    assert "50,00%" in pdf_text
+    assert "taxas calculadas dos blocos" in pdf_text
+
+
+@pytest.mark.parametrize(
+    ("workbook_options", "expected_detail"),
+    [
+        (
+            {"left_questions": [("Q1", 2, 14, 15)]},
+            "total informado (15) diverge de acertos + erros (16)",
+        ),
+        (
+            {"left_questions": [("Atividade 2025", 2, 14, 16)]},
+            "rótulo 'atividade 2025' inválido",
+        ),
+        (
+            {"left_questions": [("Q1", 0, 0, 0)]},
+            "questão sem respostas",
+        ),
+        (
+            {"left_questions": [("Q1", 1, 15, 16), ("Q1", 1, 15, 16)]},
+            "questão 1 duplicada",
+        ),
+        (
+            {"right_header": ("ITEM", "TOTAL", "ACERTOS", "ERROS faltando")},
+            "formato parcial",
+        ),
+        (
+            {"right_questions": []},
+            "não há questões válidas no bloco direito",
+        ),
+        (
+            {"separator_value": 0},
+            "coluna separadora entre os blocos deve permanecer vazia",
+        ),
+        (
+            {"separator_column": False},
+            "coluna separadora vazia",
+        ),
+    ],
+)
+def test_side_by_side_rejects_invalid_or_incomplete_blocks(
+    workbook_options: dict[str, object], expected_detail: str
+) -> None:
+    content = side_by_side_assessment_workbook(**workbook_options)
+    web = client()
+
+    inspected = web.post(
+        "/api/inspect", files={"file": ("blocos_invalidos.xlsx", content)}
+    )
+
+    assert inspected.status_code == 422
+    assert expected_detail in inspected.json()["detail"].lower()
+
+    generated = web.post(
+        "/api/generate",
+        files={"file": ("blocos_invalidos.xlsx", content)},
+        data={
+            "options": json.dumps(
+                {
+                    "kind": "assessment",
+                    "model": "avaliacao_questoes",
+                    "title": "Blocos inválidos",
+                }
+            )
+        },
+    )
+    assert generated.status_code == 422
+    assert expected_detail in generated.json()["detail"].lower()
 
 
 @pytest.mark.parametrize(
